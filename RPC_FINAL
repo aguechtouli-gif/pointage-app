@@ -1,0 +1,1844 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+web.py – Application web de pointage (Flask)
+Partage la même base de données que l'application Tkinter.
+Auteur : TRC
+Date : 2024
+"""
+
+import os
+import sqlite3
+from datetime import datetime, date, timedelta
+from functools import wraps
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    session, flash, jsonify, send_file, make_response
+)
+from matplotlib import cm
+from pandas.io import sql
+from werkzeug.utils import secure_filename
+import pandas as pd
+import hashlib
+import tempfile
+
+# Import de la classe Database depuis database.py
+from database import Database
+
+
+app = Flask(__name__)
+app.secret_key = "une_cle_secrete_tres_longue_et_unique_changez_moi"
+app.config['UPLOAD_FOLDER'] = os.path.join('pointage_data', 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+db = Database()
+
+# -------------------------------------------------------------------
+# Décorateurs
+# -------------------------------------------------------------------
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash("Veuillez vous connecter pour accéder à cette page.", "warning")
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get('role') != 'admin':
+            flash("Accès réservé aux administrateurs.", "danger")
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# -------------------------------------------------------------------
+# Authentification
+# -------------------------------------------------------------------
+@app.route('/')
+def index():
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = db.authenticate_user(username, password)
+        if user:
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['nom'] = user['nom']
+            session['prenom'] = user['prenom']
+            session['role'] = user['role']
+            flash(f"Bienvenue {user['prenom']} {user['nom']} !", "success")
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Nom d'utilisateur ou mot de passe incorrect.", "danger")
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash("Vous avez été déconnecté.", "info")
+    return redirect(url_for('login'))
+
+# -------------------------------------------------------------------
+# Tableau de bord
+# -------------------------------------------------------------------
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    stats = db.get_statistiques_completes()
+    derniers_pointages = stats.get('derniers_pointages', [])
+    return render_template('dashboard.html', stats=stats, pointages=derniers_pointages)
+
+# -------------------------------------------------------------------
+# Gestion du personnel
+# -------------------------------------------------------------------
+@app.route('/personnel')
+@login_required
+def liste_personnel():
+    search = request.args.get('search', '')
+    if search:
+        personnel = db.search_personnel(search)
+    else:
+        personnel = db.get_personnel()
+    return render_template('personnel/liste.html', personnel=personnel, search=search)
+
+@app.route('/personnel/<int:pid>')
+@login_required
+def detail_personnel(pid):
+    pers = db.get_personnel(pid)
+    if not pers:
+        flash("Personnel non trouvé.", "danger")
+        return redirect(url_for('liste_personnel'))
+    pointages = db.get_pointages_filtres(matricule=pers['matricule'])
+    # Calculer le retard pour chaque pointage d'entrée
+    for pt in pointages:
+        # Calculer le retard uniquement pour les entrées
+        if pt.get('type_pointage') == 'entrée':
+            # Convertir heure pointée et heure théorique en minutes
+            minutes_pt = heure_en_minutes(pt['heure_pointage'])
+            minutes_th = heure_en_minutes(pers['heure_entree_theorique'])
+            tolerance = pers.get('tolerance_entree', 0)
+            retard_brut = minutes_pt - minutes_th
+            if retard_brut > tolerance:
+                pt['minutes_retard'] = retard_brut   # ajouter la clé
+            else:
+                pt['minutes_retard'] = 0
+        else:
+            pt['minutes_retard'] = 0  # pas de retard pour les sorties
+
+    # Limiter à 20 pointages pour l'affichage
+    return render_template('personnel/details.html', pers=pers, pointages=pointages[:20])
+
+
+@app.route('/personnel/ajouter', methods=['GET', 'POST'])
+@login_required
+def ajouter_personnel():
+    if request.method == 'POST':
+        try:
+            matricule = request.form['matricule']
+            badge_id = request.form.get('badge_id') or None
+            nom = request.form['nom'].upper()
+            prenom = request.form['prenom'].title()
+            type_person = request.form['type_person']
+            fonction = request.form['fonction']
+            activite = request.form.get('activite') or None
+            division = request.form.get('division') or None
+            direction = request.form['direction']
+            departement = request.form.get('departement') or None
+            service = request.form.get('service') or None
+            equipe = request.form.get('equipe') or None
+            date_embauche = request.form.get('date_embauche') or None
+            date_naissance = request.form.get('date_naissance') or None
+            adresse = request.form.get('adresse') or None
+            telephone = request.form.get('telephone') or None
+            email = request.form.get('email') or None
+            statut = request.form['statut']
+            concerne_pointage = 1 if 'concerne_pointage' in request.form else 0
+            type_quart = request.form['type_quart']
+            heure_entree = request.form['heure_entree_theorique']
+            heure_sortie = request.form['heure_sortie_theorique']
+            tolerance_entree = int(request.form['tolerance_entree'])
+            tolerance_sortie = int(request.form['tolerance_sortie'])
+
+            photo = None
+            if 'photo' in request.files:
+                file = request.files['photo']
+                if file and file.filename:
+                    photo = db.sauvegarder_photo(file, matricule)
+            
+            with db.get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id FROM personnel WHERE matricule = ?", (matricule,))
+                if c.fetchone():
+                    flash("Ce matricule existe déjà.", "danger")
+                    return redirect(url_for('ajouter_personnel'))
+
+            data = (matricule, badge_id, nom, prenom, type_person,
+                    fonction, activite, division, direction, departement,
+                    service, equipe, date_embauche, date_naissance,
+                    adresse, telephone, email, photo, statut,
+                    concerne_pointage, type_quart, heure_entree, heure_sortie,
+                    tolerance_entree, tolerance_sortie)
+            db.add_personnel(data)
+            flash("Personnel ajouté avec succès.", "success")
+            return redirect(url_for('liste_personnel'))
+        except Exception as e:
+            flash(f"Erreur lors de l'ajout : {str(e)}", "danger")
+            
+    #-----------------------------------
+    # GET : afficher le formulaire vide
+    #-----------------------------------
+
+    directions = db.get_all_directions()
+    activites = db.get_all_activites()
+    services = db.get_all_services()
+    equipes = db.get_all_equipes()
+    quarts = db.get_all_quarts()
+    types_personnel = db.get_all_types_personnel()
+    return render_template('personnel/ajouter.html',
+                           directions=directions, activites=activites,
+                           services=services, equipes=equipes,
+                           quarts=quarts, types_personnel=types_personnel)
+
+@app.route('/personnel/<int:pid>/modifier', methods=['GET', 'POST'])
+@login_required
+def modifier_personnel(pid):
+    pers = db.get_personnel(pid)
+    if not pers:
+        flash("Personnel non trouvé.", "danger")
+        return redirect(url_for('liste_personnel'))
+
+    if request.method == 'POST':
+        try:
+            matricule = request.form['matricule']
+            badge_id = request.form.get('badge_id') or None
+            nom = request.form['nom'].upper()
+            prenom = request.form['prenom'].title()
+            type_person = request.form['type_person']
+            fonction = request.form['fonction']
+            activite = request.form.get('activite') or None
+            division = request.form.get('division') or None
+            direction = request.form['direction']
+            departement = request.form.get('departement') or None
+            service = request.form.get('service') or None
+            equipe = request.form.get('equipe') or None
+            date_embauche = request.form.get('date_embauche') or None
+            date_naissance = request.form.get('date_naissance') or None
+            adresse = request.form.get('adresse') or None
+            telephone = request.form.get('telephone') or None
+            email = request.form.get('email') or None
+            statut = request.form['statut']
+            concerne_pointage = 1 if 'concerne_pointage' in request.form else 0
+            type_quart = request.form['type_quart']
+            heure_entree = request.form['heure_entree_theorique']
+            heure_sortie = request.form['heure_sortie_theorique']
+            tolerance_entree = int(request.form['tolerance_entree'])
+            tolerance_sortie = int(request.form['tolerance_sortie'])
+
+            photo = pers['photo']
+            if 'photo' in request.files:
+                file = request.files['photo']
+                if file and file.filename:
+                    photo = db.sauvegarder_photo(file, pers['matricule'])
+            
+            # --- Vérification d'unicité du matricule ---
+            with db.get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id FROM personnel WHERE matricule = ? AND id != ?", (matricule, pid))
+                if c.fetchone():
+                    flash("Ce matricule est déjà utilisé par un autre agent.", "danger")
+                    return redirect(url_for('modifier_personnel', pid=pid))
+
+            # --- Mise à jour ---
+
+            data = (matricule, badge_id, nom, prenom, type_person,
+                    fonction, activite, division, direction, departement,
+                    service, equipe, date_embauche, date_naissance,
+                    adresse, telephone, email, photo, statut,
+                    concerne_pointage, type_quart, heure_entree, heure_sortie,
+                    tolerance_entree, tolerance_sortie)
+            db.update_personnel(pid, data)
+            flash("Modifications enregistrées.", "success")
+            return redirect(url_for('detail_personnel', pid=pid))
+        except Exception as e:
+            flash(f"Erreur : {e}", "danger")
+    #-----------------------------------
+    # GET : afficher le formulaire pré-rempli
+    #-----------------------------------
+    directions = db.get_all_directions()
+    activites = db.get_all_activites()
+    services = db.get_all_services()
+    equipes = db.get_all_equipes()
+    quarts = db.get_all_quarts()
+    types_personnel = db.get_all_types_personnel()
+    return render_template('personnel/modifier.html', pers=pers,
+                           directions=directions, activites=activites,
+                           services=services, equipes=equipes,
+                           quarts=quarts, types_personnel=types_personnel)
+
+@app.route('/personnel/<int:pid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_personnel(pid):
+    if db.delete_personnel(pid):
+        flash("Personnel supprimé.", "success")
+    else:
+        flash("Erreur lors de la suppression.", "danger")
+    return redirect(url_for('liste_personnel'))
+
+@app.route('/personnel/importer', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def importer_personnel():
+    if request.method == 'POST':
+        fichier = request.files['fichier']
+        if fichier and fichier.filename.endswith(('.csv', '.xlsx', '.xls')):
+            filename = secure_filename(fichier.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            fichier.save(filepath)
+            resultats = db.import_personnel_from_file(filepath)
+            flash(f"Import terminé : {resultats['importes']} importés, {resultats['mis_a_jour']} mis à jour, {resultats['erreurs']} erreurs.", "info")
+            return redirect(url_for('liste_personnel'))
+        else:
+            flash("Format de fichier non supporté.", "danger")
+    return render_template('personnel/import.html')
+
+@app.route('/personnel/activite/<nom>')
+@login_required
+def personnel_par_activite(nom):
+    # Récupérer le personnel dont l'activité correspond (exacte)
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, division, direction, departement, service
+            FROM personnel
+            WHERE activite = ? AND statut = 'actif'
+            ORDER BY nom, prenom
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/division/<nom>')
+@login_required
+def personnel_par_division(nom):
+    # Récupérer le personnel dont la division correspond (exacte)
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, division, direction, departement, service
+            FROM personnel
+            WHERE division = ? AND statut = 'actif'
+            ORDER BY nom, prenom
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/direction/<nom>')
+@login_required
+def personnel_par_direction(nom):
+    # Récupérer le personnel dont la direction correspond (exacte)
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, division, direction, departement, service
+            FROM personnel
+            WHERE direction = ? AND statut = 'actif'
+            ORDER BY nom, prenom
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/departement/<nom>')
+@login_required
+def personnel_par_departement(nom):
+    # Récupérer le personnel dont le département correspond (exacte)
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, division, direction, departement, service
+            FROM personnel
+            WHERE departement = ? AND statut = 'actif'
+            ORDER BY nom, prenom
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/service/<nom>')
+@login_required
+def personnel_par_service(nom):
+    # Récupérer le personnel dont le service correspond (exacte)
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, division, direction, departement, service
+            FROM personnel
+            WHERE service = ? AND statut = 'actif'
+            ORDER BY nom, prenom
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/quart/<nom>')
+@login_required
+def personnel_par_quart(nom):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, matricule, nom, prenom, fonction, type_quart
+            FROM personnel
+            WHERE type_quart = ? AND statut = 'actif'
+        """, (nom,))
+        personnel = [dict(row) for row in c.fetchall()]
+    return render_template('personnel/liste.html', personnel=personnel, search=nom)
+
+@app.route('/personnel/<int:pid>/export_pdf')
+@login_required
+def export_personnel_pdf(pid):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    import tempfile
+
+    pers = db.get_personnel(pid)
+    if not pers:
+        flash("Personnel non trouvé.", "danger")
+        return redirect(url_for('liste_personnel'))
+
+    # Récupérer les pointages (par exemple les 20 derniers)
+    pointages = db.get_pointages_filtres(matricule=pers['matricule'])[:20]
+
+    # Déterminer civilité
+    civilité = "Monsieur" if pers['sexe'] == 'M' else "Madame"  # supposons une colonne 'sexe'
+    # Sinon, utilisez un champ 'civilite' ou laissez vide.
+
+    titre = f"Rapport de {civilité} {pers['prenom']} {pers['nom']} - {pers['fonction'] or ''} - {pers['direction'] or ''}"
+
+    # Création du PDF
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+        pdf_path = tmp.name
+
+    doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                            rightMargin=2*cm, leftMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+    style_title = ParagraphStyle('CustomTitle', parent=styles['Title'],
+                                 fontSize=16, textColor=colors.darkblue,
+                                 alignment=1, spaceAfter=20)
+    style_normal = styles['Normal']
+
+    elements = []
+
+    # En-tête avec logo (optionnel)
+    from reportlab.platypus import Image
+    logo_path = os.path.join('static', 'images', 'logo.png')
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=2*cm, height=2*cm)
+        elements.append(logo)
+
+    # Titre
+    elements.append(Paragraph(titre, style_title))
+    elements.append(Spacer(1, 0.5*cm))
+
+    # Informations de l'agent
+    infos = [
+        ["Matricule", pers['matricule']],
+        ["Date d'embauche", pers['date_embauche'] or 'Non renseignée'],
+        ["Téléphone", pers['telephone'] or ''],
+        ["Email", pers['email'] or '']
+    ]
+    table_infos = Table(infos, colWidths=[4*cm, 8*cm])
+    table_infos.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+    ]))
+    elements.append(table_infos)
+    elements.append(Spacer(1, 0.5*cm))
+
+    # Tableau des pointages
+    if pointages:
+        data = [["Date", "Heure", "Type"]]
+        for pt in pointages:
+            data.append([pt['date_pointage'], pt['heure_pointage'], pt['type_pointage']])
+        table_pt = Table(data, repeatRows=1)
+        table_pt.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('FONTSIZE', (0,0), (-1,-1), 9),
+        ]))
+        elements.append(table_pt)
+    else:
+        elements.append(Paragraph("Aucun pointage enregistré.", style_normal))
+
+    # Pied de page
+    from datetime import datetime
+    user = session.get('prenom', '') + ' ' + session.get('nom', '')
+    def add_footer(canvas, doc):
+        canvas.saveState()
+        footer = f"Généré le {datetime.now().strftime('%d/%m/%Y %H:%M')} par {user}"
+        canvas.setFont('Helvetica', 8)
+        canvas.drawCentredString(doc.pagesize[0]/2, 1.5*cm, footer)
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=add_footer, onLaterPages=add_footer)
+
+    return send_file(pdf_path, as_attachment=False, download_name=f"rapport_{pers['matricule']}.pdf")
+
+# -------------------------------------------------------------------
+# Gestion des pointages
+# -------------------------------------------------------------------
+@app.route('/pointages')
+@login_required
+def liste_pointages():
+    date_debut = request.args.get('date_debut', '')
+    date_fin = request.args.get('date_fin', '')
+    matricule = request.args.get('matricule', '')
+    direction = request.args.get('direction', '')
+    departement = request.args.get('departement', '')
+    service = request.args.get('service', '')
+    equipe = request.args.get('equipe', '')
+
+    pointages = db.get_pointages_filtres(
+        date_debut=date_debut,
+        date_fin=date_fin,
+        matricule=matricule,
+        direction=direction,
+        departement=departement,
+        service=service,
+        equipe=equipe
+    )
+
+    # Récupérer les listes pour les filtres
+    directions = db.get_all_directions()
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT departement FROM personnel WHERE departement IS NOT NULL ORDER BY departement")
+        departements = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT service FROM personnel WHERE service IS NOT NULL ORDER BY service")
+        services = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT equipe FROM personnel WHERE equipe IS NOT NULL ORDER BY equipe")
+        equipes = [r[0] for r in c.fetchall()]
+
+    return render_template('pointages/liste.html',
+                           pointages=pointages,
+                           date_debut=date_debut,
+                           date_fin=date_fin,
+                           matricule=matricule,
+                           direction=direction,
+                           departement=departement,
+                           service=service,
+                           equipe=equipe,
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes)
+
+@app.route('/pointages/rapide', methods=['GET', 'POST'])
+@login_required
+def pointage_rapide():
+    if request.method == 'POST':
+        identifiant = request.form['identifiant'].strip()
+        type_pt = request.form['type_pointage']
+        pers = db.get_personnel_by_matricule(identifiant) or db.get_personnel_by_badge(identifiant)
+        if not pers:
+            flash("Personnel non trouvé.", "danger")
+        else:
+            pid, msg = db.add_pointage_avance(
+                matricule=pers['matricule'],
+                type_pointage=type_pt,
+                mode='web',
+                user_id=session['user_id']
+            )
+            if pid:
+                flash(f"Pointage enregistré pour {pers['prenom']} {pers['nom']} - {msg}", "success")
+            else:
+                flash(f"Erreur : {msg}", "danger")
+        return redirect(url_for('pointage_rapide'))
+    return render_template('pointages/rapide.html')
+
+@app.route('/pointages/importer', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def importer_pointages():
+    if request.method == 'POST':
+        fichier = request.files['fichier']
+        if fichier and fichier.filename.endswith(('.csv', '.xlsx', '.xls')):
+            filename = secure_filename(fichier.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            fichier.save(filepath)
+
+            mapping = {
+                'matricule': 'matricule',
+                'badge': 'badge_id',
+                'date': 'date',
+                'heure': 'heure',
+                'type': 'type'
+            }
+
+            resultats = db.import_pointages_from_file(
+                filepath=filepath,
+                format_colonnes=mapping,
+                user_id=session['user_id']
+            )
+            flash(f"Import pointages : {resultats['importes']} créés, {resultats['doublons']} doublons, {resultats['erreurs']} erreurs.", "info")
+            return redirect(url_for('liste_pointages'))
+        else:
+            flash("Format de fichier non supporté.", "danger")
+    return render_template('pointages/import.html')
+
+# -------------------------------------------------------------------
+# Gestion hiérarchique
+# -------------------------------------------------------------------
+@app.route('/hierarchie/activites')
+@login_required
+def liste_activites():
+    activites = db.get_all_activites()
+    return render_template('hierarchie/activites.html', activites=activites)
+
+@app.route('/hierarchie/activites/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_activite():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    db.add_activite(nom, code)
+    flash(f"Activité '{nom}' ajoutée.", "success")
+    return redirect(url_for('liste_activites'))
+
+@app.route('/hierarchie/activites/<int:aid>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_activite(aid):
+    activite = db.get_activite(aid)
+    if not activite:
+        flash("Activité non trouvée.", "danger")
+        return redirect(url_for('liste_activites'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        direction_id = request.form.get('direction_id')
+        active = 'active' in request.form
+        db.update_activite(aid, nom, code, direction_id, active)
+        flash("Activité modifiée.", "success")
+        return redirect(url_for('liste_activites'))
+
+    directions = db.get_all_directions()
+    return render_template('hierarchie/modifier_activite.html', activite=activite, directions=directions)
+
+@app.route('/hierarchie/activites/<int:aid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_activite(aid):
+    if db.delete_activite(aid):
+        flash("Activité supprimée.", "success")
+    else:
+        flash("Impossible de supprimer : cette activité est utilisée.", "danger")
+    return redirect(url_for('liste_activites'))
+
+
+@app.route('/hierarchie/divisions')
+@login_required
+def liste_divisions():
+    divisions = db.get_all_divisions()
+    return render_template('hierarchie/divisions.html', divisions=divisions)
+
+@app.route('/hierarchie/divisions/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_division():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    responsable = request.form.get('responsable')
+    description = request.form.get('description')
+    db.add_division(nom, code, responsable, description)
+    flash(f"Division '{nom}' ajoutée.", "success")
+    return redirect(url_for('liste_divisions'))
+
+@app.route('/hierarchie/divisions/<int:did>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_division(did):
+    division = db.get_division(did)
+    if not division:
+        flash("Division non trouvée.", "danger")
+        return redirect(url_for('liste_divisions'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        responsable = request.form.get('responsable')
+        description = request.form.get('description')
+        activite_id = request.form.get('activite_id')
+        active = 'active' in request.form
+        db.update_division(did, nom, code, responsable, description, activite_id, active)
+        flash("Division modifiée.", "success")
+        return redirect(url_for('liste_divisions'))
+
+    activites = db.get_all_activites()
+    return render_template('hierarchie/modifier_division.html', division=division, activites=activites)
+
+@app.route('/hierarchie/divisions/<int:did>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_division(did):
+    if db.delete_division(did):
+        flash("Division supprimée.", "success")
+    else:
+        flash("Impossible de supprimer : cette division est utilisée par des directions.", "danger")
+    return redirect(url_for('liste_divisions'))
+
+@app.route('/api/divisions/<int:activite_id>')
+@login_required
+def api_divisions(activite_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM divisions WHERE activite_id = ? AND active = 1 ORDER BY nom", (activite_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+@app.route('/hierarchie/directions')
+@login_required
+def liste_directions():
+    directions = db.get_all_directions()
+    return render_template('hierarchie/directions.html', directions=directions)
+
+@app.route('/hierarchie/directions/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_direction():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    responsable = request.form.get('responsable')
+    description = request.form.get('description')
+    db.add_direction(nom, code, responsable, description)
+    flash(f"Direction '{nom}' ajoutée.", "success")
+    return redirect(url_for('liste_directions'))
+
+@app.route('/hierarchie/directions/<int:did>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_direction(did):
+    direction = db.get_direction(did)
+    if not direction:
+        flash("Direction non trouvée.", "danger")
+        return redirect(url_for('liste_directions'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        responsable = request.form.get('responsable')
+        description = request.form.get('description')
+        active = 'active' in request.form
+        db.update_direction(did, nom, code, responsable, description, active)
+        flash("Direction modifiée.", "success")
+        return redirect(url_for('liste_directions'))
+
+    return render_template('hierarchie/modifier_direction.html', direction=direction)
+
+@app.route('/hierarchie/directions/<int:did>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_direction(did):
+    if db.delete_direction(did):
+        flash("Direction supprimée.", "success")
+    else:
+        flash("Impossible de supprimer : cette direction est utilisée par du personnel.", "danger")
+    return redirect(url_for('liste_directions'))
+
+@app.route('/api/directions/<int:division_id>')
+@login_required
+def api_directions(division_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM directions WHERE division_id = ? AND active = 1 ORDER BY nom", (division_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+    
+
+@app.route('/hierarchie/departements')
+@login_required
+def liste_departements():
+    departements = db.get_all_departements()
+    return render_template('hierarchie/departements.html', departements=departements)
+
+@app.route('/hierarchie/departements/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_departement():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    responsable = request.form.get('responsable')
+    description = request.form.get('description')
+    db.add_departement(nom, code, responsable, description)
+    flash(f"Département '{nom}' ajouté.", "success")
+    return redirect(url_for('liste_departements'))
+
+@app.route('/hierarchie/departements/<int:did>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_departement(did):
+    departement = db.get_departement(did)
+    if not departement:
+        flash("Département non trouvé.", "danger")
+        return redirect(url_for('liste_departements'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        responsable = request.form.get('responsable')
+        description = request.form.get('description')
+        active = 'active' in request.form
+        db.update_departement(did, nom, code, responsable, description, active)
+        flash("Département modifié.", "success")
+        return redirect(url_for('liste_departements'))
+
+    return render_template('hierarchie/modifier_departement.html', departement=departement)
+
+@app.route('/hierarchie/departements/<int:did>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_departement(did):
+    if db.delete_departement(did):
+        flash("Département supprimé.", "success")
+    else:
+        flash("Impossible de supprimer : ce département est utilisée par du personnel.", "danger")
+    return redirect(url_for('liste_departements'))
+
+@app.route('/api/departements/<int:direction_id>')
+@login_required
+def api_departements(direction_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM departements WHERE direction_id = ? AND active = 1 ORDER BY nom", (direction_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+@app.route('/hierarchie/services')
+@login_required
+def liste_services():
+    services = db.get_all_services()
+    activites = db.get_all_activites()
+    return render_template('hierarchie/services.html', services=services, activites=activites)
+
+@app.route('/hierarchie/services/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_service():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    activite_id = request.form.get('activite_id')
+    if activite_id:
+        activite_id = int(activite_id) if activite_id else None
+    db.add_service(nom, code, activite_id)
+    flash(f"Service '{nom}' ajouté.", "success")
+    return redirect(url_for('liste_services'))
+
+# Modification d'un service
+@app.route('/hierarchie/services/<int:sid>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_service(sid):
+    service = db.get_service(sid)
+    if not service:
+        flash("Service non trouvé.", "danger")
+        return redirect(url_for('liste_services'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        responsable = request.form.get('responsable')
+        description = request.form.get('description')
+        departement_id = request.form.get('departement_id')
+        active = 'active' in request.form
+        db.update_service(sid, nom, code, responsable, description, departement_id, active)
+        flash("Service modifié.", "success")
+        return redirect(url_for('liste_services'))
+
+    departements = db.get_all_departements()
+    return render_template('hierarchie/modifier_service.html', service=service, departements=departements)
+
+# Suppression d'un service
+@app.route('/hierarchie/services/<int:sid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_service(sid):
+    if db.delete_service(sid):
+        flash("Service supprimé.", "success")
+    else:
+        flash("Impossible de supprimer : ce service est utilisé par des équipes.", "danger")
+    return redirect(url_for('liste_services'))
+
+@app.route('/api/services/<int:departement_id>')
+@login_required
+def api_services(departement_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM services WHERE departement_id = ? AND active = 1 ORDER BY nom", (departement_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+@app.route('/hierarchie/equipes')
+@login_required
+def liste_equipes():
+    equipes = db.get_all_equipes()
+    services = db.get_all_services()
+    return render_template('hierarchie/equipes.html', equipes=equipes, services=services)
+
+@app.route('/hierarchie/equipes/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_equipe():
+    nom = request.form['nom']
+    code = request.form.get('code')
+    service_id = request.form.get('service_id')
+    if service_id:
+        service_id = int(service_id) if service_id else None
+    db.add_equipe(nom, code, service_id)
+    flash(f"Équipe '{nom}' ajoutée.", "success")
+    return redirect(url_for('liste_equipes'))
+
+# Modification d'une équipe
+@app.route('/hierarchie/equipes/<int:eid>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_equipe(eid):
+    equipe = db.get_equipe(eid)
+    if not equipe:
+        flash("Équipe non trouvée.", "danger")
+        return redirect(url_for('liste_equipes'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        code = request.form.get('code')
+        responsable = request.form.get('responsable')
+        description = request.form.get('description')
+        service_id = request.form.get('service_id')
+        active = 'active' in request.form
+        db.update_equipe(eid, nom, code, responsable, description, service_id, active)
+        flash("Équipe modifiée.", "success")
+        return redirect(url_for('liste_equipes'))
+
+    services = db.get_all_services()
+    return render_template('hierarchie/modifier_equipe.html', equipe=equipe, services=services)
+
+# Suppression d'une équipe
+@app.route('/hierarchie/equipes/<int:eid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_equipe(eid):
+    if db.delete_equipe(eid):
+        flash("Équipe supprimée.", "success")
+    else:
+        flash("Impossible de supprimer : cette équipe est utilisée par du personnel.", "danger")
+    return redirect(url_for('liste_equipes'))
+
+@app.route('/api/equipes/<int:service_id>')
+@login_required
+def api_equipes(service_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM equipes WHERE service_id = ? AND active = 1 ORDER BY nom", (service_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+# -------------------------------------------------------------------
+# Gestion des quarts
+# -------------------------------------------------------------------
+@app.route('/quarts')
+@login_required
+def liste_quarts():
+    quarts = db.get_all_quarts()
+    return render_template('quarts/liste.html', quarts=quarts)
+
+@app.route('/quarts/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_quart():
+    nom = request.form['nom']
+    debut = request.form['heure_debut']
+    fin = request.form['heure_fin']
+    nuit = 1 if 'est_nuit' in request.form else 0
+    description = request.form.get('description')
+    db.add_quart(nom, debut, fin, nuit, None, description)
+    flash(f"Quart '{nom}' ajouté.", "success")
+    return redirect(url_for('liste_quarts'))
+
+# Modification d'un quart
+@app.route('/quarts/<int:qid>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_quart(qid):
+    quart = db.get_quart(qid)
+    if not quart:
+        flash("Quart non trouvé.", "danger")
+        return redirect(url_for('liste_quarts'))
+
+    if request.method == 'POST':
+        nom = request.form['nom']
+        heure_debut = request.form['heure_debut']
+        heure_fin = request.form['heure_fin']
+        est_nuit = 'est_nuit' in request.form
+        duree_heures = request.form.get('duree_heures')
+        description = request.form.get('description')
+        couleur = request.form.get('couleur')
+        active = 'active' in request.form
+        db.update_quart(qid, nom, heure_debut, heure_fin, est_nuit, duree_heures, description, couleur, active)
+        flash("Quart modifié.", "success")
+        return redirect(url_for('liste_quarts'))
+
+    return render_template('hierarchie/modifier_quart.html', quart=quart)
+
+# Suppression d'un quart
+@app.route('/quarts/<int:qid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_quart(qid):
+    if db.delete_quart(qid):
+        flash("Quart supprimé.", "success")
+    else:
+        flash("Impossible de supprimer : ce quart est utilisé par du personnel.", "danger")
+    return redirect(url_for('liste_quarts'))
+
+@app.route('/api/quarts/<int:equipe_id>')
+@login_required
+def api_quarts(equipe_id):
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, nom FROM quarts WHERE equipe_id = ? AND active = 1 ORDER BY nom", (equipe_id,))
+        return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+# -------------------------------------------------------------------
+# Gestion des congés
+# -------------------------------------------------------------------
+@app.route('/conges')
+@login_required
+def liste_conges():
+    statut = request.args.get('statut', 'Tous')
+    matricule = request.args.get('matricule', '')
+    date_debut = request.args.get('date_debut', '')
+    date_fin = request.args.get('date_fin', '')
+    filters = {}
+    if statut != 'Tous':
+        filters['statut'] = statut
+    if matricule:
+        filters['matricule'] = matricule
+    if date_debut:
+        filters['date_debut'] = date_debut
+    if date_fin:
+        filters['date_fin'] = date_fin
+    conges = db.get_conges(filters)
+    personnel = db.get_personnel()
+    return render_template('conges/liste.html', conges=conges, personnel=personnel,
+                           statut=statut, matricule=matricule,
+                           date_debut=date_debut, date_fin=date_fin)
+
+@app.route('/conges/ajouter', methods=['GET', 'POST'])
+@login_required
+def ajouter_conge():
+    if request.method == 'POST':
+        matricule = request.form['matricule']
+        type_conge = request.form['type_conge']
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        duree = int(request.form['duree'])
+        motif = request.form.get('motif')
+        justificatif = None
+
+        pers = db.get_personnel_by_matricule(matricule)
+        if not pers:
+            flash("Personnel non trouvé.", "danger")
+            return redirect(url_for('liste_conges'))
+
+        data = (pers['id'], matricule, type_conge, date_debut, date_fin, duree, motif, justificatif, 'en_attente', date.today().strftime('%Y-%m-%d'))
+        db.add_conge(data)
+        flash("Demande de congé enregistrée.", "success")
+        return redirect(url_for('liste_conges'))
+
+    personnel = db.get_personnel()
+    return render_template('conges/ajouter.html', personnel=personnel)
+
+@app.route('/conges/<int:cid>/approuver', methods=['POST'])
+@login_required
+@admin_required
+def approuver_conge(cid):
+    db.update_conge_statut(cid, 'approuve', session['username'])
+    flash("Congé approuvé.", "success")
+    return redirect(url_for('liste_conges'))
+
+@app.route('/conges/<int:cid>/refuser', methods=['POST'])
+@login_required
+@admin_required
+def refuser_conge(cid):
+    db.update_conge_statut(cid, 'refuse', session['username'])
+    flash("Congé refusé.", "success")
+    return redirect(url_for('liste_conges'))
+
+# -------------------------------------------------------------------
+# Gestion des heures supplémentaires
+# -------------------------------------------------------------------
+@app.route('/heures_sup')
+@login_required
+def liste_heures_sup():
+    matricule = request.args.get('matricule', '')
+    statut = request.args.get('statut', '')
+    date_debut = request.args.get('date_debut', '')
+    date_fin = request.args.get('date_fin', '')
+    hs_list = db.get_heures_supplementaires(matricule=matricule, statut=statut,
+                                            date_debut=date_debut, date_fin=date_fin)
+    personnel = db.get_personnel()
+    return render_template('heures_sup/liste.html', hs_list=hs_list, personnel=personnel,
+                           matricule=matricule, statut=statut,
+                           date_debut=date_debut, date_fin=date_fin)
+
+@app.route('/heures_sup/ajouter', methods=['GET', 'POST'])
+@login_required
+def ajouter_heure_sup():
+    if request.method == 'POST':
+        matricule = request.form['matricule']
+        date_debut = request.form['date_debut'] + ' ' + request.form['heure_debut']
+        date_fin = request.form['date_fin'] + ' ' + request.form['heure_fin']
+        duree = float(request.form['duree'])
+        type_sup = request.form['type_sup']
+        taux = float(request.form['taux'])
+        motif = request.form.get('motif')
+
+        pers = db.get_personnel_by_matricule(matricule)
+        if not pers:
+            flash("Personnel non trouvé.", "danger")
+            return redirect(url_for('liste_heures_sup'))
+
+        db.add_heure_supplementaire(pers['id'], matricule, date_debut, date_fin, duree, type_sup, taux, motif)
+        flash("Heure supplémentaire enregistrée.", "success")
+        return redirect(url_for('liste_heures_sup'))
+
+    personnel = db.get_personnel()
+    return render_template('heures_sup/ajouter.html', personnel=personnel)
+
+@app.route('/heures_sup/<int:hsid>/approuver', methods=['POST'])
+@login_required
+@admin_required
+def approuver_heure_sup(hsid):
+    if db.update_heure_sup_statut(hsid, 'approuve', session['username']):
+        flash("Heure supplémentaire approuvée.", "success")
+    else:
+        flash("Erreur lors de l'approbation.", "danger")
+    return redirect(url_for('liste_heures_sup'))
+
+# -------------------------------------------------------------------
+# Gestion des jours fériés
+# -------------------------------------------------------------------
+@app.route('/jours_feries')
+@login_required
+def liste_jours_feries():
+    jours = db.get_all_jours_feries()
+    return render_template('jours_feries/liste.html', jours=jours)
+
+@app.route('/jours_feries/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_jour_ferie():
+    date_jour = request.form['date_jour']
+    nom = request.form['nom']
+    description = request.form.get('description')
+    db.add_jour_ferie(date_jour, nom, description)
+    flash("Jour férié ajouté.", "success")
+    return redirect(url_for('liste_jours_feries'))
+
+@app.route('/jours_feries/<int:jid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_jour_ferie(jid):
+    if db.delete_jour_ferie(jid):
+        flash("Jour férié supprimé.", "success")
+    else:
+        flash("Erreur lors de la suppression.", "danger")
+    return redirect(url_for('liste_jours_feries'))
+
+# -------------------------------------------------------------------
+# Gestion des retards cumulés
+# -------------------------------------------------------------------
+@app.route('/retards')
+@login_required
+def liste_retards():
+    mois = request.args.get('mois', datetime.now().strftime('%Y-%m'))
+    retards = db.get_retards_cumules(mois=mois)
+    return render_template('retards/liste.html', retards=retards, mois=mois)
+
+@app.route('/retards/<int:rid>/justifier', methods=['POST'])
+@login_required
+def justifier_retard(rid):
+    justification = request.form.get('justification', '')
+    if db.justifier_retard(rid, justification):
+        flash("Retard justifié.", "success")
+    else:
+        flash("Erreur lors de la justification.", "danger")
+    return redirect(url_for('liste_retards'))
+
+# -------------------------------------------------------------------
+# Rapports
+# -------------------------------------------------------------------
+
+def jours_ouvres(debut, fin):
+    jour = debut
+    while jour <= fin:
+        if not db.est_weekend(jour) and not db._est_jour_ferie(jour):
+            yield jour
+        jour += timedelta(days=1)
+        
+#-------------------------------------------------------------------------------------        
+#                    Rapport de présence
+#-------------------------------------------------------------------------------------
+@app.route('/rapports/presence', methods=['GET', 'POST'])
+@login_required
+def rapport_presence():
+    if request.method == 'POST':
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        direction = request.form.get('direction', '')
+        departement = request.form.get('departement', '')
+        service = request.form.get('service', '')
+        equipe = request.form.get('equipe', '')
+        matricule = request.form.get('matricule', '').strip()
+        type_rapport = request.form.get('type_rapport', 'resume')
+
+        if type_rapport == 'resume':
+            # Utiliser directement la méthode qui filtre et compte les présences
+            resultats = db.get_presence_report(
+                date_debut=date_debut,
+                date_fin=date_fin,
+                direction=direction,
+                departement=departement,
+                service=service,
+                equipe=equipe,
+                matricule=matricule
+            )
+            # Renommer la clé 'jours_presence' en 'nb_presences' pour le template
+            for r in resultats:
+                r['nb_presences'] = r.pop('jours_presence')
+            return render_template('rapports/presence_resultats_resume.html',
+                                   resultats=resultats,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+        else:
+            # Version détaillée : récupérer les agents avec tous les filtres
+            with db.get_connection() as conn:
+                c = conn.cursor()
+                query = """
+                    SELECT id, matricule, nom, prenom
+                    FROM personnel
+                    WHERE statut = 'actif'
+                """
+                params = []
+                if direction and direction != 'Toutes':
+                    query += " AND direction = ?"
+                    params.append(direction)
+                if departement and departement != 'Tous':
+                    query += " AND departement = ?"
+                    params.append(departement)
+                if service and service != 'Tous':
+                    query += " AND service = ?"
+                    params.append(service)
+                if equipe and equipe != 'Toutes':
+                    query += " AND equipe = ?"
+                    params.append(equipe)
+                if matricule:
+                    query += " AND matricule LIKE ?"
+                    params.append(f'%{matricule}%')
+                c.execute(query, params)
+                agents = c.fetchall()
+
+            pointages = []
+            for agent in agents:
+                c.execute("""
+                    SELECT date_pointage, heure_pointage, type_pointage
+                    FROM pointages
+                    WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                    ORDER BY date_pointage, heure_pointage
+                """, (agent['id'], date_debut, date_fin))
+                for row in c.fetchall():
+                    pointages.append({
+                        'matricule': agent['matricule'],
+                        'nom': agent['nom'],
+                        'prenom': agent['prenom'],
+                        'date': row['date_pointage'],
+                        'heure': row['heure_pointage'],
+                        'type': row['type_pointage']
+                    })
+            return render_template('rapports/presence_resultats_detail.html',
+                                   pointages=pointages,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+
+    # GET : afficher le formulaire avec les listes déroulantes
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT direction FROM personnel WHERE direction IS NOT NULL ORDER BY direction")
+        directions = [row[0] for row in c.fetchall()]
+        c.execute("SELECT DISTINCT departement FROM personnel WHERE departement IS NOT NULL ORDER BY departement")
+        departements = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT service FROM personnel WHERE service IS NOT NULL ORDER BY service")
+        services = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT equipe FROM personnel WHERE equipe IS NOT NULL ORDER BY equipe")
+        equipes = [r[0] for r in c.fetchall()]
+    now = datetime.now()
+    matricule = request.args.get('matricule', '')
+    return render_template('rapports/presence_filtres.html',
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes,
+                           now=now,
+                           matricule=matricule)
+
+#------------------------------------------
+# Rapport d'absences
+#------------------------------------------
+from datetime import datetime, timedelta
+
+#------------------------------------------
+# Rapport d'absences
+#------------------------------------------
+@app.route('/rapports/absences', methods=['GET', 'POST'])
+@login_required
+def rapport_absences():
+    if request.method == 'POST':
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        matricule = request.form.get('matricule', '').strip()
+        direction = request.form.get('direction')
+        departement = request.form.get('departement')
+        service = request.form.get('service')
+        equipe = request.form.get('equipe')
+        type_rapport = request.form.get('type_rapport', 'resume')
+
+        # Appel de la méthode centralisée dans database.py
+        if type_rapport == 'resume':
+            resultats = db.get_absence_report(
+                date_debut=date_debut,
+                date_fin=date_fin,
+                matricule=matricule,
+                direction=direction,
+                departement=departement,
+                service=service,
+                equipe=equipe,
+                type_rapport='resume'
+            )
+            return render_template('rapports/absences_resultats_resume.html',
+                                   resultats=resultats,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+        else:  # detail
+            details = db.get_absence_report(
+                date_debut=date_debut,
+                date_fin=date_fin,
+                matricule=matricule,
+                direction=direction,
+                departement=departement,
+                service=service,
+                equipe=equipe,
+                type_rapport='detail'
+            )
+            return render_template('rapports/absences_resultats_detail.html',
+                                   details=details,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+
+    # --- GET : formulaire de filtres ---
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT direction FROM personnel WHERE direction IS NOT NULL ORDER BY direction")
+        directions = [row[0] for row in c.fetchall()]
+        c.execute("SELECT DISTINCT departement FROM personnel WHERE departement IS NOT NULL ORDER BY departement")
+        departements = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT service FROM personnel WHERE service IS NOT NULL ORDER BY service")
+        services = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT equipe FROM personnel WHERE equipe IS NOT NULL ORDER BY equipe")
+        equipes = [r[0] for r in c.fetchall()]
+
+    now = datetime.now()
+    return render_template('rapports/absences_filtres.html',
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes,
+                           now=now)
+
+# -----------------------------
+# Route rapport retards avancée
+# -----------------------------
+
+# ============================================================================
+# Fonction utilitaire pour convertir une heure en minutes
+# ============================================================================
+def heure_en_minutes(heure_str):
+    """
+    Convertit une chaîne au format 'HH:MM:SS' en minutes (décimales).
+    Retourne 0 en cas d'erreur.
+    """
+    try:
+        parts = heure_str.split(':')
+        h = int(parts[0])
+        m = int(parts[1])
+        s = int(parts[2]) if len(parts) > 2 else 0
+        return h * 60 + m + s / 60
+    except:
+        return 0
+
+# ============================================================================
+# Rapport des retards
+# ============================================================================
+@app.route('/rapports/retards', methods=['GET', 'POST'])
+@login_required
+def rapport_retards():
+    if request.method == 'POST':
+        # ---------- Récupération des paramètres du formulaire ----------
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        matricule = request.form.get('matricule', '').strip()
+        direction = request.form.get('direction')
+        departement = request.form.get('departement')
+        service = request.form.get('service')
+        equipe = request.form.get('equipe')
+        type_rapport = request.form.get('type_rapport', 'resume')
+        utiliser_globaux = request.form.get('utiliser_horaires_globaux') == 'on'
+
+        # ---------- Paramètres globaux (si demandé) ----------
+        if utiliser_globaux:
+            heure_entree_globale = db.get_parametre('heure_entree_globale', '08:00:00')
+            tolerance_globale = int(db.get_parametre('tolerance_retard_globale', '0'))
+        else:
+            heure_entree_globale = None
+            tolerance_globale = 0
+
+        # ---------- Construction de la requête (pointages d'entrée) ----------
+        query = """
+            SELECT
+                p.id AS personnel_id,
+                p.matricule,
+                p.nom,
+                p.prenom,
+                p.heure_entree_theorique,
+                p.tolerance_entree,
+                pt.date_pointage,
+                pt.heure_pointage
+            FROM pointages pt
+            JOIN personnel p ON pt.personnel_id = p.id
+            WHERE p.statut = 'actif'
+              AND pt.date_pointage BETWEEN ? AND ?
+              AND pt.type_pointage = 'entrée'
+        """
+        params = [date_debut, date_fin]
+
+        # Ajout des filtres
+        if matricule:
+            query += " AND p.matricule LIKE ?"
+            params.append(f'%{matricule}%')
+        if direction and direction != 'Toutes':
+            query += " AND p.direction = ?"
+            params.append(direction)
+        if departement and departement != 'Tous':
+            query += " AND p.departement = ?"
+            params.append(departement)
+        if service and service != 'Tous':
+            query += " AND p.service = ?"
+            params.append(service)
+        if equipe and equipe != 'Toutes':
+            query += " AND p.equipe = ?"
+            params.append(equipe)
+
+        # ---------- Exécution de la requête ----------
+        with db.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, params)
+            rows = c.fetchall()
+
+        if not rows:
+            flash("Aucun pointage trouvé pour cette période.", "info")
+            return redirect(url_for('rapport_retards'))
+
+        penalite_par_min = float(db.get_parametre('penalite_retard', '0.50'))
+
+        # ========== RAPPORT RÉSUMÉ ==========
+        if type_rapport == 'resume':
+            resume = {}
+            for row in rows:
+                pid = row['personnel_id']
+                if pid not in resume:
+                    resume[pid] = {
+                        'matricule': row['matricule'],
+                        'nom': row['nom'],
+                        'prenom': row['prenom'],
+                        'nb_retards': 0,
+                        'total_min': 0,
+                        'justifie': 0,
+                        'non_justifie': 0,
+                        'penalite': 0.0
+                    }
+
+                # Déterminer l'heure théorique et la tolérance selon l'option
+                if utiliser_globaux:
+                    heure_theorique = heure_entree_globale
+                    tolerance = tolerance_globale
+                else:
+                    heure_theorique = row['heure_entree_theorique']
+                    tolerance = row['tolerance_entree']
+
+                # Calcul du retard brut et application de la tolérance
+                minutes_pt = heure_en_minutes(row['heure_pointage'])
+                minutes_th = heure_en_minutes(heure_theorique)
+                retard_brut = minutes_pt - minutes_th
+
+                if retard_brut > tolerance:
+                    retard = retard_brut
+                    resume[pid]['nb_retards'] += 1
+                    resume[pid]['total_min'] += retard
+                    resume[pid]['non_justifie'] += retard
+                    resume[pid]['penalite'] += retard * penalite_par_min
+
+            resultats = list(resume.values())
+            resultats.sort(key=lambda x: x['total_min'], reverse=True)
+            return render_template('rapports/retards_resultats_resume.html',
+                                   resultats=resultats,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+
+        # ========== RAPPORT DÉTAILLÉ ==========
+        else:
+            details = []
+            for row in rows:
+                if utiliser_globaux:
+                    heure_theorique = heure_entree_globale
+                    tolerance = tolerance_globale
+                else:
+                    heure_theorique = row['heure_entree_theorique']
+                    tolerance = row['tolerance_entree']
+
+                minutes_pt = heure_en_minutes(row['heure_pointage'])
+                minutes_th = heure_en_minutes(heure_theorique)
+                retard_brut = minutes_pt - minutes_th
+
+                if retard_brut > tolerance:
+                    retard = retard_brut
+                    details.append({
+                        'matricule': row['matricule'],
+                        'nom': row['nom'],
+                        'prenom': row['prenom'],
+                        'date': row['date_pointage'],
+                        'heure': row['heure_pointage'],
+                        'minutes': round(retard, 2),
+                        'justifie': 'Non',
+                        'motif': '',
+                        'penalite': round(retard * penalite_par_min, 2)
+                    })
+
+            details.sort(key=lambda x: (x['date'], x['heure']))
+            return render_template('rapports/retards_resultats_detail.html',
+                                   details=details,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin)
+
+    # ---------- GET : afficher le formulaire ----------
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        # Récupérer les directions distinctes depuis la table personnel
+        c.execute("SELECT DISTINCT direction FROM personnel WHERE direction IS NOT NULL AND direction != '' ORDER BY direction")
+        directions = [row[0] for row in c.fetchall()]
+        # Départements distincts
+        c.execute("SELECT DISTINCT departement FROM personnel WHERE departement IS NOT NULL AND departement != '' ORDER BY departement")
+        departements = [r[0] for r in c.fetchall()]
+        # Services distincts
+        c.execute("SELECT DISTINCT service FROM personnel WHERE service IS NOT NULL AND service != '' ORDER BY service")
+        services = [r[0] for r in c.fetchall()]
+        # Équipes distinctes
+        c.execute("SELECT DISTINCT equipe FROM personnel WHERE equipe IS NOT NULL AND equipe != '' ORDER BY equipe")
+        equipes = [r[0] for r in c.fetchall()]
+
+    now = datetime.now()
+    utiliser_globaux = db.get_parametre('utiliser_horaires_globaux', '0') == '1'
+    return render_template('rapports/retards_filtres.html',
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes,
+                           now=now,
+                           utiliser_globaux=utiliser_globaux)
+        
+
+# Export PDF générique (à utiliser pour les rapports)
+@app.route('/rapports/pdf', methods=['POST'])
+@login_required
+def exporter_rapport_pdf():
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    import json, os, tempfile
+
+    data = request.get_json()
+    titre = data.get('titre', 'Rapport')
+    colonnes = data.get('colonnes', [])
+    lignes = data.get('lignes', [])
+    sous_titre = data.get('sous_titre', '')
+
+    if not lignes:
+        return jsonify({'success': False, 'message': 'Aucune donnée'}), 400
+
+    # Orientation paysage si plus de 6 colonnes
+    pagesize = landscape(A4) if len(colonnes) > 6 else A4
+
+    # Fichier temporaire
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+        pdf_path = tmp.name
+    
+
+    doc = SimpleDocTemplate(pdf_path, pagesize=pagesize,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+
+    styles = get_pdf_styles()
+    elements = []
+
+    # Logo
+    
+    # Avant doc.build, vérifier si le logo existe et l'ajouter
+        
+    logo_path = os.path.join('static', 'images', 'logo.png')
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=3*cm, height=3*cm)
+        elements.append(logo)
+        elements.append(Spacer(1, 0.5*cm))
+
+    # Titre
+    elements.append(Paragraph(titre, styles['CustomTitle']))
+    if sous_titre:
+        elements.append(Paragraph(sous_titre, styles['Normal']))
+    elements.append(Spacer(1, 0.5*cm))
+
+    # Construction du tableau
+    data_table = [colonnes] + lignes
+    table = Table(data_table, repeatRows=1, hAlign='CENTER')
+
+    # Style de base
+    style = TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498db')),  # bleu
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 11),
+        ('BOTTOMPADDING', (0,0), (-1,0), 10),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),  # gris clair
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,1), (-1,-1), 9),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ])
+
+    # Alignement automatique des colonnes
+    for i, col in enumerate(colonnes):
+        if any(k in col.lower() for k in ('min', '€', 'id', 'nb', 'total', 'pénalité', 'jours')):
+            style.add('ALIGN', (i,1), (i,-1), 'RIGHT')
+        else:
+            style.add('ALIGN', (i,1), (i,-1), 'LEFT')
+
+    table.setStyle(style)
+    elements.append(table)
+
+    # Pied de page
+    from datetime import datetime
+    user = session.get('prenom', '') + ' ' + session.get('nom', '')
+    def add_footer(canvas, doc):
+        canvas.saveState()
+        footer = f"Généré le {datetime.now().strftime('%d/%m/%Y %H:%M')} par {user} - Page {doc.page}"
+        canvas.setFont('Helvetica', 8)
+        canvas.drawCentredString(doc.pagesize[0]/2, 1.2*cm, footer)
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=add_footer, onLaterPages=add_footer)
+
+    return send_file(pdf_path, as_attachment=False, download_name="rapport.pdf")
+
+# -------------------------------------------------------------------
+# Gestion des utilisateurs (admin)
+# -------------------------------------------------------------------
+@app.route('/utilisateurs')
+@login_required
+@admin_required
+def liste_utilisateurs():
+    utilisateurs = db.get_all_users()
+    return render_template('utilisateurs/liste.html', utilisateurs=utilisateurs)
+
+@app.route('/utilisateurs/ajouter', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def ajouter_utilisateur():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        nom = request.form['nom']
+        prenom = request.form['prenom']
+        email = request.form.get('email')
+        role = request.form['role']
+        try:
+            db.create_user(username, password, nom, prenom, email, role)
+            flash("Utilisateur créé avec succès.", "success")
+            return redirect(url_for('liste_utilisateurs'))
+        except Exception as e:
+            flash(f"Erreur : {e}", "danger")
+    return render_template('utilisateurs/ajouter.html')
+
+@app.route('/utilisateurs/<int:uid>/desactiver', methods=['POST'])
+@login_required
+@admin_required
+def desactiver_utilisateur(uid):
+    if uid == session['user_id']:
+        flash("Vous ne pouvez pas désactiver votre propre compte.", "danger")
+    else:
+        db.update_user(uid, is_active=0)
+        flash("Utilisateur désactivé.", "success")
+    return redirect(url_for('liste_utilisateurs'))
+
+# -------------------------------------------------------------------
+# Paramètres
+# -------------------------------------------------------------------
+@app.route('/parametres/tolerances', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_tolerances():
+    if request.method == 'POST':
+        db.set_parametre('tolerance_retard_globale', request.form['tolerance_retard'])
+        db.set_parametre('tolerance_depart_anticipe', request.form['tolerance_depart'])
+        flash("Paramètres mis à jour.", "success")
+        return redirect(url_for('parametres_tolerances'))
+    tolerance_retard = db.get_parametre('tolerance_retard_globale', '10')
+    tolerance_depart = db.get_parametre('tolerance_depart_anticipe', '10')
+    return render_template('parametres/tolerances.html',
+                           tolerance_retard=tolerance_retard,
+                           tolerance_depart=tolerance_depart)
+
+@app.route('/parametres/conservation', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_conservation():
+    if request.method == 'POST':
+        if 'purge' in request.form:
+            resultats = db.purger_anciennes_donnees()
+            flash(f"Purge effectuée : {resultats['pointages']} pointages, {resultats['retards']} retards, {resultats['logs']} logs supprimés.", "success")
+        else:
+            nouvelle_duree = request.form['duree_conservation']
+            db.set_parametre('duree_conservation_mois', nouvelle_duree)
+            flash(f"Délai de conservation modifié à {nouvelle_duree} mois.", "success")
+        return redirect(url_for('parametres_conservation'))
+    duree = db.get_parametre('duree_conservation_mois', '12')
+    return render_template('parametres/conservation.html', duree=duree)
+
+@app.route('/parametres/weekend', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_weekend():
+    if request.method == 'POST':
+        jours = ','.join(request.form.getlist('jours'))
+        db.set_parametre('jours_weekend', jours)
+        flash("Configuration des jours de weekend enregistrée.", "success")
+        return redirect(url_for('parametres_weekend'))
+    actuel = db.get_parametre('jours_weekend', '5,6')
+    jours_selectionnes = [int(x) for x in actuel.split(',') if x.strip()]
+    return render_template('parametres/weekend.html', jours_selectionnes=jours_selectionnes)
+
+# -------------------------------------------------------------------
+# API JSON pour badges
+# -------------------------------------------------------------------
+@app.route('/api/pointage', methods=['POST'])
+def api_pointage():
+    data = request.json
+    identifiant = data.get('matricule') or data.get('badge_id')
+    type_pt = data.get('type', 'entrée')
+    pers = db.get_personnel_by_matricule(identifiant) or db.get_personnel_by_badge(identifiant)
+    if not pers:
+        return jsonify({'success': False, 'message': 'Personnel non trouvé'}), 404
+    pid, msg = db.add_pointage_avance(
+        matricule=pers['matricule'],
+        type_pointage=type_pt,
+        mode='api',
+        user_id=None
+    )
+    if pid:
+        return jsonify({'success': True, 'message': msg})
+    else:
+        return jsonify({'success': False, 'message': msg}), 400
+    
+# -------------------------------------------------------------------
+# Paramètres des horaires globaux
+# -------------------------------------------------------------------
+@app.route('/parametres/horaires_globaux', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_horaires_globaux():
+    if request.method == 'POST':
+        db.set_parametre('heure_entree_globale', request.form['heure_entree_globale'])
+        db.set_parametre('heure_sortie_globale', request.form['heure_sortie_globale'])
+        db.set_parametre('utiliser_horaires_globaux', '1' if 'utiliser_horaires_globaux' in request.form else '0')
+        flash("Horaires globaux mis à jour.", "success")
+        return redirect(url_for('parametres_horaires_globaux'))
+    
+    heure_entree = db.get_parametre('heure_entree_globale', '08:00:00')
+    heure_sortie = db.get_parametre('heure_sortie_globale', '17:00:00')
+    utiliser_globaux = db.get_parametre('utiliser_horaires_globaux', '0') == '1'
+    return render_template('parametres/horaires_globaux.html',
+                           heure_entree=heure_entree,
+                           heure_sortie=heure_sortie,
+                           utiliser_globaux=utiliser_globaux)  
+# -------------------------------------------------------------------
+# Route pour servir les photos des agents
+# -------------------------------------------------------------------    
+@app.route('/photos/<path:filename>')
+@login_required
+@admin_required
+def servir_photo(filename):
+    dossier_photos = os.path.join('pointage_data', 'photos')
+    return send_from_directory(dossier_photos, filename)
+
+# -------------------------------------------------------------------
+# Styles PDF personnalisés
+# -------------------------------------------------------------------
+
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+
+def get_pdf_styles():
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CustomTitle',
+        parent=styles['Title'],
+        fontSize=16,
+        textColor=colors.HexColor('#2c3e50'),
+        alignment=1,  # centré
+        spaceAfter=20
+    ))
+    styles.add(ParagraphStyle(
+        name='CustomHeader',
+        parent=styles['Normal'],
+        fontSize=12,
+        textColor=colors.white,
+        alignment=1,
+        backColor=colors.HexColor('#3498db')
+    ))
+    return styles
+    
+# -------------------------------------------------------------------
+# Lancement
+# -------------------------------------------------------------------
+
+if __name__ == '__main__':
+    # Pour éviter l'erreur send_from_directory non importée
+    from flask import send_from_directory
+    app.run(debug=True, host='127.0.0.1', port=5000)
