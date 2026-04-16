@@ -1443,3 +1443,526 @@ class Database:
     def get_heures_travaillees(self, matricule, date_debut, date_fin):
         # Implémentation simplifiée
         return []
+        # ------------------------------------------------------------
+    # Rapports et calculs
+    # ------------------------------------------------------------
+    def _calculer_heures_jour(self, pts):
+        from datetime import datetime
+        entree = None
+        sortie = None
+        pause_debut = None
+        pause_fin = None
+        for p in pts:
+            if p['type'] == 'entrée':
+                entree = datetime.strptime(p['heure'], '%H:%M:%S')
+            elif p['type'] == 'sortie':
+                sortie = datetime.strptime(p['heure'], '%H:%M:%S')
+            elif p['type'] == 'pause_début':
+                pause_debut = datetime.strptime(p['heure'], '%H:%M:%S')
+            elif p['type'] == 'pause_fin':
+                pause_fin = datetime.strptime(p['heure'], '%H:%M:%S')
+        if entree and sortie:
+            total = (sortie - entree).total_seconds() / 3600
+            if pause_debut and pause_fin:
+                total -= (pause_fin - pause_debut).total_seconds() / 3600
+            return total
+        return 0
+
+    def get_retard_report(self, date_debut, date_fin, matricule=None, direction_nom=None,
+                          departement_nom=None, service_nom=None, equipe_nom=None,
+                          type_rapport='resume', utiliser_globaux=False):
+        from datetime import datetime, timedelta
+
+        def heure_en_minutes(h):
+            try:
+                hh, mm, ss = map(int, h.split(':'))
+                return hh * 60 + mm + ss / 60
+            except:
+                return 0
+
+        debut = datetime.strptime(date_debut, '%Y-%m-%d').date()
+        fin = datetime.strptime(date_fin, '%Y-%m-%d').date()
+
+        if utiliser_globaux:
+            heure_entree_globale = self.get_parametre('heure_entree_globale', '08:00:00')
+            tolerance_globale = int(self.get_parametre('tolerance_retard_globale', '0'))
+        else:
+            heure_entree_globale = None
+            tolerance_globale = 0
+
+        query = """
+            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom,
+                   p.heure_entree_theorique, p.tolerance_entree,
+                   pt.date_pointage, pt.heure_pointage,
+                   dir.nom_direction as direction_nom,
+                   dep.nom_departement as departement_nom,
+                   s.nom_service as service_nom,
+                   e.nom_equipe as equipe_nom
+            FROM pointages pt
+            JOIN personnel p ON pt.personnel_id = p.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE p.statut = 'actif'
+              AND pt.date_pointage BETWEEN ? AND ?
+              AND pt.type_pointage = 'entrée'
+        """
+        params = [debut, fin]
+        if matricule:
+            query += " AND p.matricule LIKE ?"
+            params.append(f'%{matricule}%')
+        if direction_nom:
+            query += " AND dir.nom_direction = ?"
+            params.append(direction_nom)
+        if departement_nom:
+            query += " AND dep.nom_departement = ?"
+            params.append(departement_nom)
+        if service_nom:
+            query += " AND s.nom_service = ?"
+            params.append(service_nom)
+        if equipe_nom:
+            query += " AND e.nom_equipe = ?"
+            params.append(equipe_nom)
+
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, params)
+            rows = c.fetchall()
+
+            if not rows:
+                return []
+
+            penalite_par_min = float(self.get_parametre('penalite_retard', '0.50'))
+
+            if type_rapport == 'resume':
+                resume = {}
+                for row in rows:
+                    pid = row['personnel_id']
+                    if pid not in resume:
+                        resume[pid] = {
+                            'matricule': row['matricule'],
+                            'nom': row['nom'],
+                            'prenom': row['prenom'],
+                            'direction': row['direction_nom'] or '',
+                            'departement': row['departement_nom'] or '',
+                            'service': row['service_nom'] or '',
+                            'equipe': row['equipe_nom'] or '',
+                            'nb_retards': 0,
+                            'total_min': 0,
+                            'justifie': 0,
+                            'non_justifie': 0,
+                            'penalite': 0.0
+                        }
+
+                    if utiliser_globaux:
+                        heure_theorique = heure_entree_globale
+                        tolerance = tolerance_globale
+                    else:
+                        heure_theorique = row['heure_entree_theorique']
+                        tolerance = row['tolerance_entree']
+
+                    minutes_pt = heure_en_minutes(row['heure_pointage'])
+                    minutes_th = heure_en_minutes(heure_theorique)
+                    retard = minutes_pt - minutes_th - tolerance
+
+                    if retard > 0:
+                        resume[pid]['nb_retards'] += 1
+                        resume[pid]['total_min'] += retard
+                        resume[pid]['non_justifie'] += retard
+                        resume[pid]['penalite'] += retard * penalite_par_min
+
+                resultats = list(resume.values())
+                resultats.sort(key=lambda x: x['total_min'], reverse=True)
+                return resultats
+
+            else:
+                details = []
+                for row in rows:
+                    if utiliser_globaux:
+                        heure_theorique = heure_entree_globale
+                        tolerance = tolerance_globale
+                    else:
+                        heure_theorique = row['heure_entree_theorique']
+                        tolerance = row['tolerance_entree']
+
+                    minutes_pt = heure_en_minutes(row['heure_pointage'])
+                    minutes_th = heure_en_minutes(heure_theorique)
+                    retard = minutes_pt - minutes_th - tolerance
+
+                    if retard > 0:
+                        details.append({
+                            'matricule': row['matricule'],
+                            'nom': row['nom'],
+                            'prenom': row['prenom'],
+                            'direction': row['direction_nom'] or '',
+                            'departement': row['departement_nom'] or '',
+                            'service': row['service_nom'] or '',
+                            'equipe': row['equipe_nom'] or '',
+                            'date': row['date_pointage'],
+                            'heure': row['heure_pointage'],
+                            'minutes': round(retard, 2),
+                            'justifie': 'Non',
+                            'motif': '',
+                            'penalite': round(retard * penalite_par_min, 2)
+                        })
+                return details
+
+    def get_heures_supplementaires(self, matricule=None, date_debut=None, date_fin=None, statut=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = '''
+                SELECT h.*, p.nom, p.prenom
+                FROM heures_supplementaires h
+                JOIN personnel p ON h.personnel_id = p.id
+                WHERE 1=1
+            '''
+            params = []
+            if matricule:
+                query += ' AND h.matricule = ?'
+                params.append(matricule)
+            if date_debut:
+                query += ' AND h.date_heure_debut >= ?'
+                params.append(date_debut)
+            if date_fin:
+                query += ' AND h.date_heure_fin <= ?'
+                params.append(date_fin)
+            if statut:
+                query += ' AND h.statut = ?'
+                params.append(statut)
+            query += ' ORDER BY h.date_heure_debut DESC'
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def add_heure_supplementaire(self, personnel_id, matricule, date_debut, date_fin,
+                                 duree, type_sup='normale', taux=1.25, motif=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            from datetime import datetime
+            debut = datetime.strptime(date_debut, '%Y-%m-%d %H:%M')
+            est_weekend = 1 if debut.weekday() >= 5 else 0
+            cursor.execute('SELECT COUNT(*) FROM jours_feries WHERE date_jour=?', (debut.date(),))
+            est_jferie = cursor.fetchone()[0]
+            cursor.execute('''
+                INSERT INTO heures_supplementaires (
+                    personnel_id, matricule, date_heure_debut, date_heure_fin,
+                    duree_heures, type_heure_sup, taux_majoration,
+                    est_weekend, est_jour_ferie, motif, statut
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,'en_attente')
+            ''', (personnel_id, matricule, date_debut, date_fin, duree,
+                  type_sup, taux, est_weekend, est_jferie, motif))
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_heure_sup_statut(self, hs_id, statut, approuve_par):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE heures_supplementaires SET statut=?, approuve_par=?, date_approbation=?
+                WHERE id=?
+            ''', (statut, approuve_par, datetime.now(), hs_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ------------------------------------------------------------
+    # Congés
+    # ------------------------------------------------------------
+    def add_conge(self, data):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO conges (personnel_id, matricule, type_conge, date_debut, date_fin,
+                    duree_jours, motif, justificatif, statut, date_demande)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+            ''', data)
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_conges(self, filtres=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = '''
+                SELECT c.*, p.nom, p.prenom,
+                       dir.nom_direction as direction,
+                       s.nom_service as service
+                FROM conges c
+                JOIN personnel p ON c.personnel_id = p.id
+                LEFT JOIN directions dir ON p.direction_id = dir.id
+                LEFT JOIN services s ON p.service_id = s.id
+                WHERE 1=1
+            '''
+            params = []
+            if filtres:
+                if 'statut' in filtres and filtres['statut'] != 'Tous':
+                    query += ' AND c.statut = ?'
+                    params.append(filtres['statut'])
+                if 'matricule' in filtres and filtres['matricule']:
+                    query += ' AND c.matricule = ?'
+                    params.append(filtres['matricule'])
+                if 'date_debut' in filtres and filtres['date_debut']:
+                    query += ' AND c.date_debut >= ?'
+                    params.append(filtres['date_debut'])
+                if 'date_fin' in filtres and filtres['date_fin']:
+                    query += ' AND c.date_fin <= ?'
+                    params.append(filtres['date_fin'])
+                if 'type_conge' in filtres and filtres['type_conge'] != 'Tous':
+                    query += ' AND c.type_conge = ?'
+                    params.append(filtres['type_conge'])
+            query += ' ORDER BY c.date_demande DESC, c.created_at DESC'
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_conge_statut(self, conge_id, statut, approuve_par):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE conges SET statut=?, approuve_par=?, date_approbation=?, updated_at=?
+                WHERE id=?
+            ''', (statut, approuve_par, datetime.now(), datetime.now(), conge_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ------------------------------------------------------------
+    # Jours fériés
+    # ------------------------------------------------------------
+    def get_all_jours_feries(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM jours_feries ORDER BY date_jour DESC')
+            return [dict(row) for row in cursor.fetchall()]
+
+    def add_jour_ferie(self, date_jour, nom, desc=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR IGNORE INTO jours_feries (date_jour, nom, description) VALUES (?,?,?)',
+                           (date_jour, nom, desc))
+            conn.commit()
+            return cursor.lastrowid
+
+    def delete_jour_ferie(self, jid):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM jours_feries WHERE id=?', (jid,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ------------------------------------------------------------
+    # Paramètres
+    # ------------------------------------------------------------
+    def get_parametre(self, cle, default=''):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT valeur FROM parametres WHERE cle=?', (cle,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+
+    def set_parametre(self, cle, valeur):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM parametres WHERE cle = ?", (cle,))
+            if cursor.fetchone()[0] > 0:
+                cursor.execute("UPDATE parametres SET valeur = ? WHERE cle = ?", (valeur, cle))
+            else:
+                cursor.execute("INSERT INTO parametres (cle, valeur) VALUES (?, ?)", (cle, valeur))
+            conn.commit()
+
+    # ------------------------------------------------------------
+    # Utilitaires
+    # ------------------------------------------------------------
+    def est_weekend(self, date_obj):
+        jours_str = self.get_parametre('jours_weekend', '5,6')
+        jours_weekend = [int(x.strip()) for x in jours_str.split(',') if x.strip()]
+        return date_obj.weekday() in jours_weekend
+
+    def est_jour_ferie(self, date_obj):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM jours_feries WHERE date_jour=?", (date_obj,))
+            return c.fetchone()[0] > 0
+
+    def sauvegarder_photo(self, fichier, matricule):
+        import os
+        from werkzeug.utils import secure_filename
+        dossier = os.path.join('pointage_data', 'photos')
+        os.makedirs(dossier, exist_ok=True)
+        ext = os.path.splitext(fichier.filename)[1]
+        nom_fichier = secure_filename(f"photo_{matricule}{ext}")
+        chemin = os.path.join(dossier, nom_fichier)
+        fichier.save(chemin)
+        return chemin
+
+    def purger_anciennes_donnees(self):
+        try:
+            duree = int(self.get_parametre('duree_conservation_mois', '12'))
+        except:
+            duree = 12
+        date_limite = (datetime.now() - timedelta(days=30 * duree)).strftime('%Y-%m-%d')
+        result = {'pointages': 0, 'retards': 0, 'logs': 0}
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('DELETE FROM pointages WHERE date_pointage < ?', (date_limite,))
+            result['pointages'] = c.rowcount
+            c.execute('DELETE FROM retards_cumules WHERE date_retard < ?', (date_limite,))
+            result['retards'] = c.rowcount
+            date_logs = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d %H:%M:%S')
+            c.execute('DELETE FROM logs WHERE created_at < ?', (date_logs,))
+            result['logs'] = c.rowcount
+            conn.commit()
+        return result
+
+    def generer_rapport_presence_pdf(self, date_debut, date_fin, direction=None):
+        from pdf_reports import write_report
+        from flask import render_template
+        import tempfile
+        rapport = self.get_presence_report(date_debut, date_fin, direction)
+        donnees = [dict(row) for row in rapport]
+        html = render_template('rapports/rapport_presence.html',
+                               titre="Rapport de présence",
+                               date_debut=date_debut,
+                               date_fin=date_fin,
+                               donnees=donnees,
+                               date_generation=datetime.now().strftime('%d/%m/%Y %H:%M'))
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            pdf_path = tmp.name
+        write_report(html, pdf_path)
+        return pdf_path
+
+    def get_retards_avec_filtres(self, agent_id=None, direction=None, departement=None,
+                                 service=None, equipe=None, date_debut=None, date_fin=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                SELECT r.matricule, p.nom, p.prenom,
+                       dir.nom_direction as direction,
+                       dep.nom_departement as departement,
+                       s.nom_service as service,
+                       e.nom_equipe as equipe,
+                       COUNT(r.id) as nb_retards,
+                       SUM(r.minutes_retard) as total_min,
+                       SUM(CASE WHEN r.est_justifie = 1 THEN r.minutes_retard ELSE 0 END) as justifie,
+                       SUM(CASE WHEN r.est_justifie = 0 THEN r.minutes_retard ELSE 0 END) as non_justifie
+                FROM retards_cumules r
+                JOIN personnel p ON r.personnel_id = p.id
+                LEFT JOIN directions dir ON p.direction_id = dir.id
+                LEFT JOIN departements dep ON p.departement_id = dep.id
+                LEFT JOIN services s ON p.service_id = s.id
+                LEFT JOIN equipes e ON p.equipe_id = e.id
+                WHERE 1=1
+            """
+            params = []
+            if agent_id:
+                query += " AND p.id = ?"
+                params.append(agent_id)
+            if direction:
+                query += " AND dir.nom_direction = ?"
+                params.append(direction)
+            if departement:
+                query += " AND dep.nom_departement = ?"
+                params.append(departement)
+            if service:
+                query += " AND s.nom_service = ?"
+                params.append(service)
+            if equipe:
+                query += " AND e.nom_equipe = ?"
+                params.append(equipe)
+            if date_debut and date_fin:
+                query += " AND r.date_retard BETWEEN ? AND ?"
+                params.extend([date_debut, date_fin])
+            query += " GROUP BY r.personnel_id ORDER BY total_min DESC"
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_absences_avec_filtres(self, agent=None, direction=None, departement=None,
+                                  service=None, equipe=None, date_debut=None, date_fin=None):
+        from datetime import datetime, timedelta
+        debut = datetime.strptime(date_debut, '%Y-%m-%d').date() if date_debut else None
+        fin = datetime.strptime(date_fin, '%Y-%m-%d').date() if date_fin else None
+        if not debut or not fin:
+            return []
+
+        query_agents = """
+            SELECT p.id, p.matricule, p.nom, p.prenom,
+                   dir.nom_direction as direction,
+                   dep.nom_departement as departement,
+                   s.nom_service as service,
+                   e.nom_equipe as equipe
+            FROM personnel p
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE p.statut = 'actif'
+        """
+        params_agents = []
+        if agent and agent != 'Tous':
+            query_agents += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ?)"
+            params_agents.extend([f'%{agent}%', f'%{agent}%', f'%{agent}%'])
+        if direction and direction != 'Toutes':
+            query_agents += " AND dir.nom_direction = ?"
+            params_agents.append(direction)
+        if departement and departement != 'Tous':
+            query_agents += " AND dep.nom_departement = ?"
+            params_agents.append(departement)
+        if service and service != 'Tous':
+            query_agents += " AND s.nom_service = ?"
+            params_agents.append(service)
+        if equipe and equipe != 'Toutes':
+            query_agents += " AND e.nom_equipe = ?"
+            params_agents.append(equipe)
+
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query_agents, params_agents)
+            agents = c.fetchall()
+
+            resultats = []
+            for agent in agents:
+                jours_ouvres = self._calculer_jours_ouvres(debut, fin)
+                nb_jours_ouvres = len(jours_ouvres)
+
+                c.execute("""
+                    SELECT COUNT(DISTINCT date_pointage)
+                    FROM pointages
+                    WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                """, (agent['id'], debut, fin))
+                nb_pointes = c.fetchone()[0] or 0
+
+                c.execute("""
+                    SELECT SUM(
+                        julianday(MIN(date_fin, ?)) - julianday(MAX(date_debut, ?)) + 1
+                    )
+                    FROM conges
+                    WHERE personnel_id = ? AND statut = 'approuve'
+                        AND date_debut <= ? AND date_fin >= ?
+                """, (fin, debut, agent['id'], fin, debut))
+                nb_conges = c.fetchone()[0] or 0
+                nb_conges = int(round(nb_conges))
+
+                absences = nb_jours_ouvres - nb_pointes - nb_conges
+                if absences < 0:
+                    absences = 0
+
+                resultats.append({
+                    'matricule': agent['matricule'],
+                    'nom': agent['nom'],
+                    'prenom': agent['prenom'],
+                    'direction': agent['direction'] or '',
+                    'departement': agent['departement'] or '',
+                    'service': agent['service'] or '',
+                    'equipe': agent['equipe'] or '',
+                    'jours_ouvres': nb_jours_ouvres,
+                    'pointes': nb_pointes,
+                    'conges': nb_conges,
+                    'absences': absences
+                })
+
+            return resultats
+
+    def _calculer_jours_ouvres(self, debut, fin):
+        jours = []
+        jour = debut
+        while jour <= fin:
+            if not self.est_weekend(jour) and not self.est_jour_ferie(jour):
+                jours.append(jour)
+            jour += timedelta(days=1)
+        return jours
