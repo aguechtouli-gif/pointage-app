@@ -3,6 +3,7 @@
 """
 app.py – Application principale de pointage (interface graphique Tkinter)
 Contient toutes les classes d'interface utilisateur.
+Version corrigée : rapports avec jointures hiérarchiques, exports PDF sécurisés.
 """
 
 import os
@@ -20,7 +21,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import tempfile
 import subprocess
-from datetime import datetime, date, timedelta
 
 # Import de la classe Database depuis le fichier séparé
 from database import Database
@@ -53,15 +53,6 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
                      color_conditions=None, col_widths=None):
     """
     Exporte un DataFrame pandas en PDF avec options avancées.
-    df : DataFrame à exporter
-    titre : titre du rapport
-    filename : chemin du fichier de sortie
-    orientation : 'portrait' ou 'landscape'
-    logo_path : chemin vers une image (logo) à placer en haut à droite
-    pied_page : texte à afficher en bas de page (peut contenir \n)
-    color_conditions : liste de tuples (colonne, condition, couleur)
-        exemple: [('absences', lambda x: x > 5, colors.red)]
-    col_widths : liste des largeurs de colonnes (en cm) ou dictionnaire {col: largeur}
     """
     if orientation == 'landscape':
         pagesize = landscape(A4)
@@ -74,7 +65,6 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
 
     elements = []
 
-    # Logo et titre
     styles = getSampleStyleSheet()
     title_style = styles['Title']
     normal_style = styles['Normal']
@@ -82,7 +72,6 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
     if logo_path and os.path.exists(logo_path):
         try:
             logo = RLImage(logo_path, width=3*cm, height=2*cm)
-            # Utiliser une table pour aligner logo à droite et titre à gauche
             header_data = [[Paragraph(titre, title_style), logo]]
             header_table = Table(header_data, colWidths=[15*cm, 4*cm])
             header_table.setStyle(TableStyle([
@@ -97,14 +86,11 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
         elements.append(Paragraph(titre, title_style))
     elements.append(Spacer(1, 0.5*cm))
 
-    # Préparation des données du tableau
     data = [df.columns.tolist()] + df.values.tolist()
 
-    # Déterminer les largeurs de colonnes
     if col_widths is None:
-        col_widths = [2.5] * len(df.columns)  # valeur par défaut
+        col_widths = [2.5] * len(df.columns)
     elif isinstance(col_widths, dict):
-        # Si dictionnaire, on applique les largeurs données, les autres automatiques
         auto_widths = []
         for j, col in enumerate(df.columns):
             if col in col_widths:
@@ -118,7 +104,6 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
 
     table = Table(data, colWidths=col_widths, repeatRows=1)
 
-    # Style de base
     style = TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.grey),
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
@@ -132,11 +117,10 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ])
 
-    # Appliquer les couleurs conditionnelles
     if color_conditions:
         for col_name, condition, color in color_conditions:
             if col_name in df.columns:
-                col_index = df.columns.get_loc(col_name) + 1  # +1 car data[0] est l'en-tête
+                col_index = df.columns.get_loc(col_name) + 1
                 for i, row in enumerate(data[1:], start=1):
                     try:
                         if condition(row[col_index-1]):
@@ -147,11 +131,10 @@ def dataframe_to_pdf(df, titre, filename, orientation='portrait',
     table.setStyle(style)
     elements.append(table)
 
-    # Pied de page
     if pied_page:
         elements.append(Spacer(1, 0.5*cm))
         style_pied = getSampleStyleSheet()['Normal']
-        style_pied.alignment = 1  # Centré
+        style_pied.alignment = 1
         style_pied.fontSize = 8
         elements.append(Paragraph(pied_page, style_pied))
 
@@ -243,7 +226,6 @@ class ImportPointages:
         tk.Label(self.window, text="📥 IMPORTATION DE FICHIER DE POINTAGES",
                  font=('Arial', 14, 'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
 
-        # Canvas avec scroll
         canvas = tk.Canvas(self.window, bg='#f0f0f0', highlightthickness=0)
         scrollbar = tk.Scrollbar(self.window, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -253,7 +235,6 @@ class ImportPointages:
         canvas.pack(side="left", fill="both", expand=True, padx=20, pady=10)
         scrollbar.pack(side="right", fill="y")
 
-        # Instructions
         instr = tk.Frame(main_frame, bg='#e8f4f8')
         instr.pack(fill=tk.X, padx=10, pady=10)
         tk.Label(instr, text="📋 Format attendu :", font=('Arial', 10, 'bold'), bg='#e8f4f8').pack(anchor='w', padx=10, pady=5)
@@ -264,7 +245,6 @@ class ImportPointages:
         tk.Label(instr, text="La datetime peut être au format 'YYYY-MM-DD HH:MM:SS' ou 'DD/MM/YYYY HH:MM:SS'.",
                  bg='#e8f4f8', font=('Arial', 9)).pack(anchor='w', padx=20, pady=2)
 
-        # Sélection fichier
         file_frame = tk.Frame(main_frame, bg='white')
         file_frame.pack(fill=tk.X, padx=10, pady=15)
         tk.Label(file_frame, text="Fichier source :", font=('Arial', 10, 'bold'), bg='white').pack(anchor='w', padx=5)
@@ -275,7 +255,6 @@ class ImportPointages:
         tk.Button(path_frame, text="📂 Parcourir", command=self.parcourir_fichier,
                   bg='#3498db', fg='white', width=15).pack(side=tk.LEFT, padx=5)
 
-        # Mapping des colonnes
         map_frame = tk.LabelFrame(main_frame, text="Correspondance des colonnes", font=('Arial', 10, 'bold'), bg='white')
         map_frame.pack(fill=tk.X, padx=10, pady=10)
 
@@ -289,13 +268,11 @@ class ImportPointages:
         self.datetime_entry.grid(row=1, column=1, padx=5, pady=5)
         self.datetime_entry.insert(0, 'datetime')
 
-        # Aperçu
         preview_frame = tk.LabelFrame(main_frame, text="Aperçu du fichier", font=('Arial', 10, 'bold'), bg='white')
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.preview_text = tk.Text(preview_frame, height=10, width=70, font=('Courier', 9))
         self.preview_text.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        # Boutons
         btn_frame = tk.Frame(self.window, bg='#f0f0f0')
         btn_frame.pack(side=tk.BOTTOM, pady=20, fill=tk.X)
         tk.Button(btn_frame, text="✅ IMPORTER", command=self.importer,
@@ -325,7 +302,6 @@ class ImportPointages:
             self.preview_text.insert(tk.END, f"\n\n✅ Fichier: {os.path.basename(filename)}")
             self.preview_text.insert(tk.END, f"\n📊 Colonnes détectées: {', '.join(df.columns)}")
             
-            # Suggestion automatique
             for col in df.columns:
                 col_lower = col.lower()
                 if 'matricule' in col_lower:
@@ -382,8 +358,6 @@ class ImportPointages:
                 for detail in resultats[:20]:
                     self.preview_text.insert(tk.END, f"• {detail}\n")
                     
-        
-
             messagebox.showinfo("Import terminé", f"{results['importes']} pointages importés, {results['erreurs']} erreurs.")
             if results['erreurs'] == 0:
                 if messagebox.askyesno("Succès", "Fermer la fenêtre ?"):
@@ -395,13 +369,10 @@ class ImportPointages:
         if self.window:
             self.window.destroy()
 
-
 # ============================================================
 # RAPPORT DES RETARDS
 # ============================================================
 class RapportRetards:
-    """Fenêtre de rapport des retards avec filtres multiples et export PDF."""
-
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
@@ -422,11 +393,9 @@ class RapportRetards:
         main_frame = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Filtres
         filtres_frame = tk.LabelFrame(main_frame, text="Filtres", font=('Arial', 12, 'bold'), bg='white')
         filtres_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        # Ligne 1 : Matricule, Direction
         row1 = tk.Frame(filtres_frame, bg='white')
         row1.pack(fill=tk.X, padx=10, pady=5)
 
@@ -441,7 +410,6 @@ class RapportRetards:
         self.direction_combo.pack(side=tk.LEFT, padx=5)
         self.charger_directions()
 
-        # Ligne 2 : Département, Service
         row2 = tk.Frame(filtres_frame, bg='white')
         row2.pack(fill=tk.X, padx=10, pady=5)
 
@@ -457,7 +425,6 @@ class RapportRetards:
         self.service_combo.pack(side=tk.LEFT, padx=5)
         self.charger_services()
 
-        # Ligne 3 : Équipe
         row3 = tk.Frame(filtres_frame, bg='white')
         row3.pack(fill=tk.X, padx=10, pady=5)
 
@@ -467,7 +434,6 @@ class RapportRetards:
         self.equipe_combo.pack(side=tk.LEFT, padx=5)
         self.charger_equipes()
 
-        # Période
         row4 = tk.Frame(filtres_frame, bg='white')
         row4.pack(fill=tk.X, padx=10, pady=10)
 
@@ -485,7 +451,6 @@ class RapportRetards:
                   bg='#3498db', fg='white', font=('Arial', 10, 'bold'),
                   width=15).pack(side=tk.LEFT, padx=20)
 
-        # Résultats
         result_frame = tk.LabelFrame(main_frame, text="Résultats", font=('Arial', 12, 'bold'), bg='white')
         result_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -517,7 +482,6 @@ class RapportRetards:
         tk.Button(btn_export, text="📄 Exporter PDF", command=self.choisir_colonnes_et_exporter,
                   bg='#e67e22', fg='white', width=15).pack(side=tk.RIGHT, padx=5)
 
-        # Charger les listes
         self.charger_directions()
         self.charger_departements()
         self.charger_services()
@@ -571,10 +535,10 @@ class RapportRetards:
 
             query_agents = """
                 SELECT p.id, p.matricule, p.nom, p.prenom,
-                   dir.nom_direction as direction,
-                   dep.nom_departement as departement,
-                   s.nom_service as service,
-                   e.nom_equipe as equipe
+                       dir.nom_direction as direction,
+                       dep.nom_departement as departement,
+                       s.nom_service as service,
+                       e.nom_equipe as equipe
                 FROM personnel p
                 LEFT JOIN directions dir ON p.direction_id = dir.id
                 LEFT JOIN departements dep ON p.departement_id = dep.id
@@ -585,20 +549,20 @@ class RapportRetards:
             params_agents = []
 
             if matricule:
-                query_agents += " AND matricule LIKE ?"
+                query_agents += " AND p.matricule LIKE ?"
                 params_agents.append(f'%{matricule}%')
             else:
                 if direction and direction != 'Toutes':
-                    query_agents += " AND direction = ?"
+                    query_agents += " AND dir.nom_direction = ?"
                     params_agents.append(direction)
                 if departement and departement != 'Tous':
-                    query_agents += " AND departement = ?"
+                    query_agents += " AND dep.nom_departement = ?"
                     params_agents.append(departement)
                 if service and service != 'Tous':
-                    query_agents += " AND service = ?"
+                    query_agents += " AND s.nom_service = ?"
                     params_agents.append(service)
                 if equipe and equipe != 'Toutes':
-                    query_agents += " AND equipe = ?"
+                    query_agents += " AND e.nom_equipe = ?"
                     params_agents.append(equipe)
 
             with self.app.db.get_connection() as conn:
@@ -738,7 +702,11 @@ class RapportRetards:
 
         try:
             df = pd.DataFrame(self.resultats)
-            df_export = df[colonnes_choisies].copy()
+            colonnes_existantes = [c for c in colonnes_choisies if c in df.columns]
+            if not colonnes_existantes:
+                messagebox.showerror("Erreur", "Aucune colonne valide à exporter")
+                return
+            df_export = df[colonnes_existantes].copy()
 
             mapping_noms = {
                 'matricule': 'Matricule',
@@ -754,11 +722,11 @@ class RapportRetards:
                 'non_justifie': 'Non justifiés (min)',
                 'penalite': 'Pénalité (€)'
             }
-            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_choisies}
+            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_existantes}
             df_export.rename(columns=rename_dict, inplace=True)
 
             titre = f"Rapport des retards du {self.date_debut.get_date().strftime('%d/%m/%Y')} au {self.date_fin.get_date().strftime('%d/%m/%Y')}"
-            orientation = 'landscape' if len(colonnes_choisies) > 6 else 'portrait'
+            orientation = 'landscape' if len(colonnes_existantes) > 6 else 'portrait'
 
             logo_path = os.path.join('pointage_data', 'assets', 'logo_entreprise.png')
             if not os.path.exists(logo_path):
@@ -970,24 +938,36 @@ class RapportAbsences:
             service = self.service_var.get()
             equipe = self.equipe_var.get()
 
-            query_agents = "SELECT id, matricule, nom, prenom FROM personnel WHERE statut = 'actif'"
+            query_agents = """
+                SELECT p.id, p.matricule, p.nom, p.prenom,
+                       dir.nom_direction as direction,
+                       dep.nom_departement as departement,
+                       s.nom_service as service,
+                       e.nom_equipe as equipe
+                FROM personnel p
+                LEFT JOIN directions dir ON p.direction_id = dir.id
+                LEFT JOIN departements dep ON p.departement_id = dep.id
+                LEFT JOIN services s ON p.service_id = s.id
+                LEFT JOIN equipes e ON p.equipe_id = e.id
+                WHERE p.statut = 'actif'
+            """
             params_agents = []
 
             if matricule:
-                query_agents += " AND matricule LIKE ?"
+                query_agents += " AND p.matricule LIKE ?"
                 params_agents.append(f'%{matricule}%')
             else:
                 if direction and direction != 'Toutes':
-                    query_agents += " AND direction = ?"
+                    query_agents += " AND dir.nom_direction = ?"
                     params_agents.append(direction)
                 if departement and departement != 'Tous':
-                    query_agents += " AND departement = ?"
+                    query_agents += " AND dep.nom_departement = ?"
                     params_agents.append(departement)
                 if service and service != 'Tous':
-                    query_agents += " AND service = ?"
+                    query_agents += " AND s.nom_service = ?"
                     params_agents.append(service)
                 if equipe and equipe != 'Toutes':
-                    query_agents += " AND equipe = ?"
+                    query_agents += " AND e.nom_equipe = ?"
                     params_agents.append(equipe)
 
             with self.app.db.get_connection() as conn:
@@ -1030,10 +1010,10 @@ class RapportAbsences:
                     'matricule': agent['matricule'],
                     'nom': agent['nom'],
                     'prenom': agent['prenom'],
-                    'direction': direction or '',
-                    'departement': departement or '',
-                    'service': service or '',
-                    'equipe': equipe or '',
+                    'direction': agent['direction'] or '',
+                    'departement': agent['departement'] or '',
+                    'service': agent['service'] or '',
+                    'equipe': agent['equipe'] or '',
                     'jours_ouvres': nb_jours_ouvres,
                     'pointes': nb_pointes,
                     'conges': nb_conges,
@@ -1129,7 +1109,11 @@ class RapportAbsences:
 
         try:
             df = pd.DataFrame(self.resultats)
-            df_export = df[colonnes_choisies].copy()
+            colonnes_existantes = [c for c in colonnes_choisies if c in df.columns]
+            if not colonnes_existantes:
+                messagebox.showerror("Erreur", "Aucune colonne valide à exporter")
+                return
+            df_export = df[colonnes_existantes].copy()
 
             mapping_noms = {
                 'matricule': 'Matricule',
@@ -1144,11 +1128,11 @@ class RapportAbsences:
                 'conges': 'Jours congé',
                 'absences': 'Absences'
             }
-            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_choisies}
+            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_existantes}
             df_export.rename(columns=rename_dict, inplace=True)
 
             titre = f"Rapport des absences du {self.date_debut.get_date().strftime('%d/%m/%Y')} au {self.date_fin.get_date().strftime('%d/%m/%Y')}"
-            orientation = 'landscape' if len(colonnes_choisies) > 6 else 'portrait'
+            orientation = 'landscape' if len(colonnes_existantes) > 6 else 'portrait'
 
             logo_path = os.path.join('pointage_data', 'assets', 'logo_entreprise.png')
             if not os.path.exists(logo_path):
@@ -1339,24 +1323,36 @@ class RapportPresence:
             service = self.service_var.get()
             equipe = self.equipe_var.get()
 
-            query_agents = "SELECT id, matricule, nom, prenom FROM personnel WHERE statut = 'actif'"
+            query_agents = """
+                SELECT p.id, p.matricule, p.nom, p.prenom,
+                       dir.nom_direction as direction,
+                       dep.nom_departement as departement,
+                       s.nom_service as service,
+                       e.nom_equipe as equipe
+                FROM personnel p
+                LEFT JOIN directions dir ON p.direction_id = dir.id
+                LEFT JOIN departements dep ON p.departement_id = dep.id
+                LEFT JOIN services s ON p.service_id = s.id
+                LEFT JOIN equipes e ON p.equipe_id = e.id
+                WHERE p.statut = 'actif'
+            """
             params_agents = []
 
             if matricule:
-                query_agents += " AND matricule LIKE ?"
+                query_agents += " AND p.matricule LIKE ?"
                 params_agents.append(f'%{matricule}%')
             else:
                 if direction and direction != 'Toutes':
-                    query_agents += " AND direction = ?"
+                    query_agents += " AND dir.nom_direction = ?"
                     params_agents.append(direction)
                 if departement and departement != 'Tous':
-                    query_agents += " AND departement = ?"
+                    query_agents += " AND dep.nom_departement = ?"
                     params_agents.append(departement)
                 if service and service != 'Tous':
-                    query_agents += " AND service = ?"
+                    query_agents += " AND s.nom_service = ?"
                     params_agents.append(service)
                 if equipe and equipe != 'Toutes':
-                    query_agents += " AND equipe = ?"
+                    query_agents += " AND e.nom_equipe = ?"
                     params_agents.append(equipe)
 
             with self.app.db.get_connection() as conn:
@@ -1382,10 +1378,10 @@ class RapportPresence:
                     'matricule': agent['matricule'],
                     'nom': agent['nom'],
                     'prenom': agent['prenom'],
-                    'direction': direction or '',
-                    'departement': departement or '',
-                    'service': service or '',
-                    'equipe': equipe or '',
+                    'direction': agent['direction'] or '',
+                    'departement': agent['departement'] or '',
+                    'service': agent['service'] or '',
+                    'equipe': agent['equipe'] or '',
                     'jours_presence': jours
                 })
 
@@ -1474,7 +1470,11 @@ class RapportPresence:
 
         try:
             df = pd.DataFrame(self.resultats)
-            df_export = df[colonnes_choisies].copy()
+            colonnes_existantes = [c for c in colonnes_choisies if c in df.columns]
+            if not colonnes_existantes:
+                messagebox.showerror("Erreur", "Aucune colonne valide à exporter")
+                return
+            df_export = df[colonnes_existantes].copy()
 
             mapping_noms = {
                 'matricule': 'Matricule',
@@ -1486,11 +1486,11 @@ class RapportPresence:
                 'equipe': 'Équipe',
                 'jours_presence': 'Jours présence'
             }
-            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_choisies}
+            rename_dict = {c: mapping_noms.get(c, c) for c in colonnes_existantes}
             df_export.rename(columns=rename_dict, inplace=True)
 
             titre = f"Rapport de présence du {self.date_debut.get_date().strftime('%d/%m/%Y')} au {self.date_fin.get_date().strftime('%d/%m/%Y')}"
-            orientation = 'landscape' if len(colonnes_choisies) > 6 else 'portrait'
+            orientation = 'landscape' if len(colonnes_existantes) > 6 else 'portrait'
 
             logo_path = os.path.join('pointage_data', 'assets', 'logo_entreprise.png')
             if not os.path.exists(logo_path):
@@ -1519,6 +1519,164 @@ class RapportPresence:
             messagebox.showinfo("Succès", f"Export PDF terminé vers {filename}")
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de l'export PDF : {e}")
+
+# ============================================================
+# APPLICATION PRINCIPALE (Tkinter)
+# ============================================================
+class PointageApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Système de Pointage")
+        self.db = Database()
+        self.current_user = None
+        self.main_window = None
+        self.login_window = LoginWindow(self.root, self)
+
+    def show_main_window(self):
+        self.main_window = tk.Tk()
+        self.main_window.title("Système de Pointage - Accueil")
+        self.main_window.geometry("1200x700")
+        self.main_window.configure(bg='#f0f0f0')
+
+        # Menu
+        menubar = tk.Menu(self.main_window)
+        self.main_window.config(menu=menubar)
+
+        # Fichier
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Fichier", menu=file_menu)
+        file_menu.add_command(label="Exporter les données", command=self.exporter_donnees)
+        file_menu.add_separator()
+        file_menu.add_command(label="Quitter", command=self.main_window.quit)
+
+        # Personnel
+        pers_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Personnel", menu=pers_menu)
+        pers_menu.add_command(label="Liste du personnel", command=self.liste_personnel)
+        pers_menu.add_command(label="Ajouter un agent", command=self.ajouter_personnel)
+        pers_menu.add_separator()
+        pers_menu.add_command(label="Importer fichier", command=self.importer_personnel)
+
+        # Pointages
+        pt_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Pointages", menu=pt_menu)
+        pt_menu.add_command(label="Pointage rapide", command=self.pointage_rapide)
+        pt_menu.add_command(label="Liste des pointages", command=self.liste_pointages)
+        pt_menu.add_separator()
+        pt_menu.add_command(label="Importer pointages", command=self.importer_pointages)
+
+        # Rapports
+        rep_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Rapports", menu=rep_menu)
+        rep_menu.add_command(label="Rapport des retards", command=self.rapport_retards)
+        rep_menu.add_command(label="Rapport des absences", command=self.rapport_absences)
+        rep_menu.add_command(label="Rapport de présence", command=self.rapport_presence)
+
+        # Paramètres
+        param_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Paramètres", menu=param_menu)
+        param_menu.add_command(label="Jours fériés", command=self.gestion_jours_feries)
+        param_menu.add_command(label="Paramètres généraux", command=self.parametres_generaux)
+
+        # Aide
+        aide_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Aide", menu=aide_menu)
+        aide_menu.add_command(label="À propos", command=self.a_propos)
+
+        # Contenu principal
+        main_frame = tk.Frame(self.main_window, bg='white', relief=tk.RAISED, bd=2)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Logo
+        try:
+            logo_path = resource_path(os.path.join('assets', 'logo_entreprise.png'))
+            if os.path.exists(logo_path):
+                img = Image.open(logo_path)
+                img = img.resize((200, 70), Image.LANCZOS)
+                logo_img = ImageTk.PhotoImage(img)
+                logo_label = tk.Label(main_frame, image=logo_img, bg='white')
+                logo_label.image = logo_img
+                logo_label.pack(pady=10)
+        except Exception as e:
+            print(f"Erreur logo: {e}")
+
+        tk.Label(main_frame, text="BIENVENUE DANS LE SYSTÈME DE POINTAGE",
+                 font=('Arial', 18, 'bold'), fg='#2c3e50', bg='white').pack(pady=20)
+
+        tk.Label(main_frame, text=f"Connecté : {self.current_user.get('prenom', '')} {self.current_user.get('nom', '')}",
+                 font=('Arial', 10), fg='#7f8c8d', bg='white').pack(pady=5)
+
+        # Cadre des statistiques
+        stats_frame = tk.Frame(main_frame, bg='#ecf0f1', relief=tk.RAISED, bd=1)
+        stats_frame.pack(fill=tk.X, padx=20, pady=20)
+
+        try:
+            stats = self.db.get_statistiques_completes()
+            tk.Label(stats_frame, text=f"👥 Personnel actif : {stats.get('personnel_actif', 0)}",
+                     font=('Arial', 12), bg='#ecf0f1', fg='#2c3e50').pack(side=tk.LEFT, padx=20, pady=10)
+            tk.Label(stats_frame, text=f"✅ Pointages ce mois : {stats.get('pointages_periode', 0)}",
+                     font=('Arial', 12), bg='#ecf0f1', fg='#2c3e50').pack(side=tk.LEFT, padx=20, pady=10)
+            tk.Label(stats_frame, text=f"⚠️ Retards ce mois : {stats.get('retards_periode', 0)}",
+                     font=('Arial', 12), bg='#ecf0f1', fg='#2c3e50').pack(side=tk.LEFT, padx=20, pady=10)
+        except:
+            pass
+
+        # Boutons rapides
+        btn_frame = tk.Frame(main_frame, bg='white')
+        btn_frame.pack(pady=20)
+
+        tk.Button(btn_frame, text="📋 Pointage rapide", command=self.pointage_rapide,
+                  bg='#3498db', fg='white', font=('Arial', 11, 'bold'), width=18, height=2).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="👥 Liste personnel", command=self.liste_personnel,
+                  bg='#2ecc71', fg='white', font=('Arial', 11, 'bold'), width=18, height=2).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="📊 Rapport retards", command=self.rapport_retards,
+                  bg='#e67e22', fg='white', font=('Arial', 11, 'bold'), width=18, height=2).pack(side=tk.LEFT, padx=10)
+
+        self.main_window.mainloop()
+
+    def exporter_donnees(self):
+        messagebox.showinfo("Exporter", "Fonction à implémenter")
+
+    def liste_personnel(self):
+        messagebox.showinfo("Liste personnel", "Fonction à implémenter")
+
+    def ajouter_personnel(self):
+        messagebox.showinfo("Ajouter", "Fonction à implémenter")
+
+    def importer_personnel(self):
+        messagebox.showinfo("Importer", "Fonction à implémenter")
+
+    def pointage_rapide(self):
+        matricule = simpledialog.askstring("Pointage rapide", "Entrez le matricule :")
+        if matricule:
+            type_pt = messagebox.askquestion("Type", "Pointage entrée ? (Oui=entrée, Non=sortie)")
+            type_pt = "entrée" if type_pt == 'yes' else "sortie"
+            result, msg = self.db.add_pointage_avance(matricule, type_pt, user_id=self.current_user['id'])
+            messagebox.showinfo("Résultat", msg)
+
+    def liste_pointages(self):
+        messagebox.showinfo("Liste pointages", "Fonction à implémenter")
+
+    def importer_pointages(self):
+        ImportPointages(self.main_window, self).ouvrir()
+
+    def rapport_retards(self):
+        RapportRetards(self.main_window, self).ouvrir()
+
+    def rapport_absences(self):
+        RapportAbsences(self.main_window, self).ouvrir()
+
+    def rapport_presence(self):
+        RapportPresence(self.main_window, self).ouvrir()
+
+    def gestion_jours_feries(self):
+        messagebox.showinfo("Jours fériés", "Fonction à implémenter")
+
+    def parametres_generaux(self):
+        messagebox.showinfo("Paramètres", "Fonction à implémenter")
+
+    def a_propos(self):
+        messagebox.showinfo("À propos", "Système de Pointage\nVersion 2.0\n© 2025")
 
 
 # ============================================================
@@ -1565,7 +1723,7 @@ class GestionHierarchie:
         notebook.add(self.tab_eq, text="👥 Équipes")
         self.create_tab_equipes()
 
-        # Chargement initial
+        # Chargement initial des listes (les combobox sont déjà créées dans les onglets)
         self.charger_activites()
         self.charger_divisions()
         self.charger_directions()
@@ -1622,6 +1780,8 @@ class GestionHierarchie:
         self.act_code.delete(0, tk.END)
         self.act_responsable.delete(0, tk.END)
         self.charger_activites()
+        # Rafraîchir les combobox dépendantes
+        self.charger_activites_combo()
 
     def charger_activites(self):
         for i in self.tree_act.get_children():
@@ -1631,17 +1791,18 @@ class GestionHierarchie:
             self.tree_act.insert('', 'end', values=(
                 a['id'],
                 a['nom'],
-                a['code'] or '',
+                a.get('code_activite', '') or '',
                 a.get('responsable', '') or '',
-                'Oui' if a['active'] else 'Non'
+                'Oui' if a.get('active', 1) else 'Non'
             ))
-            
+
     def charger_activites_combo(self):
+        """Charge la liste des activités dans la combobox de l'onglet Divisions."""
         try:
             acts = self.app.db.get_all_activites()
-            self.div_activite['values'] = [a['nom'] for a in acts]  # ← au lieu de a['nom_activite']
+            self.div_activite['values'] = [a['nom'] for a in acts]
         except Exception as e:
-            print(f"Erreur chargement activités: {e}")
+            print(f"Erreur chargement activités dans combo: {e}")
 
     def desactiver_activite(self):
         sel = self.tree_act.selection()
@@ -1654,6 +1815,7 @@ class GestionHierarchie:
             cursor.execute("UPDATE activites SET active=0 WHERE id=?", (act_id,))
             conn.commit()
         self.charger_activites()
+        self.charger_activites_combo()
 
     # ---------- DIVISIONS ----------
     def create_tab_divisions(self):
@@ -1678,6 +1840,7 @@ class GestionHierarchie:
         tk.Label(add_frame, text="Activité :", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
         self.div_activite = ttk.Combobox(add_frame, width=25, state='readonly')
         self.div_activite.grid(row=1, column=3, padx=5, pady=5)
+        self.charger_activites_combo()  # Remplir la combobox
 
         tk.Label(add_frame, text="Description :", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.div_description = tk.Text(add_frame, height=3, width=60)
@@ -1703,7 +1866,6 @@ class GestionHierarchie:
         tk.Button(btn_frame, text="🗑️ Désactiver", command=self.desactiver_division,
                   bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
 
-       
     def ajouter_division(self):
         nom = self.div_nom.get().strip()
         if not nom:
@@ -1728,28 +1890,31 @@ class GestionHierarchie:
         self.div_description.delete("1.0", tk.END)
         self.div_activite.set('')
         self.charger_divisions()
+        self.charger_divisions_combo()  # Rafraîchir la combobox des divisions
 
     def charger_divisions(self):
         for i in self.tree_div.get_children():
             self.tree_div.delete(i)
         divs = self.app.db.get_all_divisions()
         for d in divs:
+            # Récupérer le nom de l'activité (si l'attribut n'existe pas, on affiche vide)
+            activite_nom = d.get('activite_nom', '')
             self.tree_div.insert('', 'end', values=(
                 d['id'],
                 d['nom'],
-                d.get('code', '') or '',
+                d.get('code_division', '') or '',
                 d.get('responsable', '') or '',
-                d.get('activite_nom', '') or '',
-                'Oui' if d['active'] else 'Non'
+                activite_nom,
+                'Oui' if d.get('active', 1) else 'Non'
             ))
-        
+
     def charger_divisions_combo(self):
+        """Charge la liste des divisions dans la combobox de l'onglet Directions."""
         try:
             divs = self.app.db.get_all_divisions()
             self.dir_division['values'] = [d['nom'] for d in divs]
         except Exception as e:
-            print(f"Erreur chargement divisions: {e}")
-            
+            print(f"Erreur chargement divisions dans combo: {e}")
 
     def desactiver_division(self):
         sel = self.tree_div.selection()
@@ -1762,6 +1927,7 @@ class GestionHierarchie:
             cursor.execute("UPDATE divisions SET active=0 WHERE id=?", (div_id,))
             conn.commit()
         self.charger_divisions()
+        self.charger_divisions_combo()
 
     # ---------- DIRECTIONS ----------
     def create_tab_directions(self):
@@ -1786,6 +1952,7 @@ class GestionHierarchie:
         tk.Label(add_frame, text="Division :", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
         self.dir_division = ttk.Combobox(add_frame, width=25, state='readonly')
         self.dir_division.grid(row=1, column=3, padx=5, pady=5)
+        self.charger_divisions_combo()  # Remplir la combobox
 
         tk.Label(add_frame, text="Description :", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.dir_description = tk.Text(add_frame, height=3, width=60)
@@ -1810,7 +1977,6 @@ class GestionHierarchie:
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Button(btn_frame, text="🗑️ Désactiver", command=self.desactiver_direction,
                   bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
- 
 
     def ajouter_direction(self):
         nom = self.dir_nom.get().strip()
@@ -1836,6 +2002,7 @@ class GestionHierarchie:
         self.dir_description.delete("1.0", tk.END)
         self.dir_division.set('')
         self.charger_directions()
+        self.charger_directions_combo_dep()  # Rafraîchir la combobox des départements
 
     def charger_directions(self):
         for i in self.tree_dir.get_children():
@@ -1845,18 +2012,19 @@ class GestionHierarchie:
             self.tree_dir.insert('', 'end', values=(
                 d['id'],
                 d['nom'],
-                d.get('code', '') or '',
+                d.get('code_direction', '') or '',
                 d.get('responsable', '') or '',
                 d.get('division_nom', '') or '',
-                'Oui' if d['active'] else 'Non'
+                'Oui' if d.get('active', 1) else 'Non'
             ))
-            
+
     def charger_directions_combo_dep(self):
+        """Charge la liste des directions dans la combobox de l'onglet Départements."""
         try:
             dirs = self.app.db.get_all_directions()
             self.dep_direction['values'] = [d['nom'] for d in dirs]
         except Exception as e:
-            print(f"Erreur chargement directions: {e}")
+            print(f"Erreur chargement directions dans combo: {e}")
 
     def desactiver_direction(self):
         sel = self.tree_dir.selection()
@@ -1869,6 +2037,7 @@ class GestionHierarchie:
             cursor.execute("UPDATE directions SET active=0 WHERE id=?", (dir_id,))
             conn.commit()
         self.charger_directions()
+        self.charger_directions_combo_dep()
 
     # ---------- DÉPARTEMENTS ----------
     def create_tab_departements(self):
@@ -1893,6 +2062,7 @@ class GestionHierarchie:
         tk.Label(add_frame, text="Direction :", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
         self.dep_direction = ttk.Combobox(add_frame, width=25, state='readonly')
         self.dep_direction.grid(row=1, column=3, padx=5, pady=5)
+        self.charger_directions_combo_dep()  # Remplir la combobox
 
         tk.Label(add_frame, text="Description :", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.dep_description = tk.Text(add_frame, height=3, width=60)
@@ -1918,7 +2088,6 @@ class GestionHierarchie:
         tk.Button(btn_frame, text="🗑️ Désactiver", command=self.desactiver_departement,
                   bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
 
-
     def ajouter_departement(self):
         nom = self.dep_nom.get().strip()
         if not nom:
@@ -1943,6 +2112,7 @@ class GestionHierarchie:
         self.dep_description.delete("1.0", tk.END)
         self.dep_direction.set('')
         self.charger_departements()
+        self.charger_departements_combo_serv()  # Rafraîchir la combobox des services
 
     def charger_departements(self):
         for i in self.tree_dep.get_children():
@@ -1952,18 +2122,19 @@ class GestionHierarchie:
             self.tree_dep.insert('', 'end', values=(
                 d['id'],
                 d['nom'],
-                d.get('code', '') or '',
+                d.get('code_departement', '') or '',
                 d.get('responsable', '') or '',
                 d.get('direction_nom', '') or '',
-                'Oui' if d['active'] else 'Non'
+                'Oui' if d.get('active', 1) else 'Non'
             ))
+
     def charger_departements_combo_serv(self):
+        """Charge la liste des départements dans la combobox de l'onglet Services."""
         try:
             deps = self.app.db.get_all_departements()
             self.serv_departement['values'] = [d['nom'] for d in deps]
         except Exception as e:
-            print(f"Erreur chargement départements: {e}")
-            
+            print(f"Erreur chargement départements dans combo: {e}")
 
     def desactiver_departement(self):
         sel = self.tree_dep.selection()
@@ -1976,6 +2147,7 @@ class GestionHierarchie:
             cursor.execute("UPDATE departements SET active=0 WHERE id=?", (dep_id,))
             conn.commit()
         self.charger_departements()
+        self.charger_departements_combo_serv()
 
     # ---------- SERVICES ----------
     def create_tab_services(self):
@@ -2000,6 +2172,7 @@ class GestionHierarchie:
         tk.Label(add_frame, text="Département :", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
         self.serv_departement = ttk.Combobox(add_frame, width=25, state='readonly')
         self.serv_departement.grid(row=1, column=3, padx=5, pady=5)
+        self.charger_departements_combo_serv()  # Remplir la combobox
 
         tk.Label(add_frame, text="Description :", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.serv_description = tk.Text(add_frame, height=3, width=60)
@@ -2025,7 +2198,6 @@ class GestionHierarchie:
         tk.Button(btn_frame, text="🗑️ Désactiver", command=self.desactiver_service,
                   bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
 
-
     def ajouter_service(self):
         nom = self.serv_nom.get().strip()
         if not nom:
@@ -2050,6 +2222,7 @@ class GestionHierarchie:
         self.serv_description.delete("1.0", tk.END)
         self.serv_departement.set('')
         self.charger_services()
+        self.charger_services_combo_eq()  # Rafraîchir la combobox des équipes
 
     def charger_services(self):
         for i in self.tree_serv.get_children():
@@ -2059,18 +2232,19 @@ class GestionHierarchie:
             self.tree_serv.insert('', 'end', values=(
                 s['id'],
                 s['nom'],
-                s.get('code', '') or '',
+                s.get('code_service', '') or '',
                 s.get('responsable', '') or '',
                 s.get('departement_nom', '') or '',
-                'Oui' if s['active'] else 'Non'
+                'Oui' if s.get('active', 1) else 'Non'
             ))
-    
+
     def charger_services_combo_eq(self):
+        """Charge la liste des services dans la combobox de l'onglet Équipes."""
         try:
             servs = self.app.db.get_all_services()
             self.eq_service['values'] = [s['nom'] for s in servs]
         except Exception as e:
-            print(f"Erreur chargement services: {e}")
+            print(f"Erreur chargement services dans combo: {e}")
 
     def desactiver_service(self):
         sel = self.tree_serv.selection()
@@ -2083,6 +2257,7 @@ class GestionHierarchie:
             cursor.execute("UPDATE services SET active=0 WHERE id=?", (serv_id,))
             conn.commit()
         self.charger_services()
+        self.charger_services_combo_eq()
 
     # ---------- ÉQUIPES ----------
     def create_tab_equipes(self):
@@ -2107,6 +2282,7 @@ class GestionHierarchie:
         tk.Label(add_frame, text="Service :", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
         self.eq_service = ttk.Combobox(add_frame, width=25, state='readonly')
         self.eq_service.grid(row=1, column=3, padx=5, pady=5)
+        self.charger_services_combo_eq()  # Remplir la combobox
 
         tk.Label(add_frame, text="Description :", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.eq_description = tk.Text(add_frame, height=3, width=60)
@@ -2131,7 +2307,6 @@ class GestionHierarchie:
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Button(btn_frame, text="🗑️ Désactiver", command=self.desactiver_equipe,
                   bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
-
 
     def ajouter_equipe(self):
         nom = self.eq_nom.get().strip()
@@ -2166,12 +2341,12 @@ class GestionHierarchie:
             self.tree_eq.insert('', 'end', values=(
                 e['id'],
                 e['nom'],
-                e.get('code', '') or '',
+                e.get('code_equipe', '') or '',
                 e.get('responsable', '') or '',
                 e.get('service_nom', '') or '',
-                'Oui' if e['active'] else 'Non'
+                'Oui' if e.get('active', 1) else 'Non'
             ))
-    
+
     def desactiver_equipe(self):
         sel = self.tree_eq.selection()
         if not sel:
@@ -2184,1003 +2359,6 @@ class GestionHierarchie:
             conn.commit()
         self.charger_equipes()
 
-
-
-# ============================================================
-# GESTION POINTAGES
-# ============================================================
-class GestionPointages:
-    def __init__(self, parent, app):
-        self.parent = parent
-        self.app = app
-        self.window = None
-        self.filtres = {}
-
-    def ouvrir(self):
-        self.window = tk.Toplevel(self.parent)
-        self.window.title("Gestion des pointages")
-        self.window.geometry("1200x700")
-        self.window.transient(self.parent)
-        self.window.grab_set()
-        self.window.configure(bg='#f0f0f0')
-        self.create_widgets()
-        self.charger_pointages()
-
-    def create_widgets(self):
-        tk.Label(self.window, text="📋 GESTION DES POINTAGES",
-                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
-        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Pointage rapide
-        quick = tk.LabelFrame(main, text="⏱️ Pointage rapide", font=('Arial',12,'bold'), bg='white')
-        quick.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(quick, text="Matricule / Badge:", bg='white').grid(row=0, column=0, padx=5, pady=5)
-        self.entry_id = tk.Entry(quick, width=20)
-        self.entry_id.grid(row=0, column=1, padx=5, pady=5)
-        self.entry_id.focus_set()
-        tk.Label(quick, text="Type:", bg='white').grid(row=0, column=2, padx=5, pady=5)
-        self.type_var = tk.StringVar(value='entrée')
-        ttk.Combobox(quick, textvariable=self.type_var,
-                    values=['entrée','sortie','pause_début','pause_fin'], width=12).grid(row=0, column=3, padx=5, pady=5)
-        tk.Label(quick, text="Justification:", bg='white').grid(row=0, column=4, padx=5, pady=5)
-        self.entry_just = tk.Entry(quick, width=30)
-        self.entry_just.grid(row=0, column=5, padx=5, pady=5)
-        tk.Button(quick, text="✅ Pointer", command=self.pointer,
-                  bg='#27ae60', fg='white', font=('Arial',10,'bold')).grid(row=0, column=6, padx=10, pady=5)
-
-        # Filtres
-        filt = tk.LabelFrame(main, text="🔍 Filtres", font=('Arial',12,'bold'), bg='white')
-        filt.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(filt, text="Du:", bg='white').grid(row=0, column=0, padx=5, pady=5)
-        self.date_debut = DateEntry(filt, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
-        self.date_debut.grid(row=0, column=1, padx=5, pady=5)
-        self.date_debut.set_date(datetime.now().replace(day=1))
-        tk.Label(filt, text="Au:", bg='white').grid(row=0, column=2, padx=5, pady=5)
-        self.date_fin = DateEntry(filt, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
-        self.date_fin.grid(row=0, column=3, padx=5, pady=5)
-        self.date_fin.set_date(datetime.now())
-        tk.Label(filt, text="Matricule:", bg='white').grid(row=0, column=4, padx=5, pady=5)
-        self.filtre_mat = tk.Entry(filt, width=15)
-        self.filtre_mat.grid(row=0, column=5, padx=5, pady=5)
-        tk.Label(filt, text="Direction:", bg='white').grid(row=1, column=0, padx=5, pady=5)
-        self.filtre_dir = ttk.Combobox(filt, width=20)
-        self.filtre_dir.grid(row=1, column=1, padx=5, pady=5)
-        self.charger_directions()
-        tk.Label(filt, text="Type:", bg='white').grid(row=1, column=2, padx=5, pady=5)
-        self.filtre_type = ttk.Combobox(filt, values=['','entrée','sortie','pause_début','pause_fin'], width=12)
-        self.filtre_type.grid(row=1, column=3, padx=5, pady=5)
-        self.filtre_type.set('')
-        tk.Button(filt, text="🔍 Rechercher", command=self.appliquer_filtres,
-                  bg='#3498db', fg='white').grid(row=1, column=4, columnspan=2, padx=10, pady=5)
-
-        # Tableau des résultats
-        tab = tk.Frame(main, bg='white')
-        tab.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        cols = ('ID','Date','Heure','Matricule','Nom','Type','Quart','Retard','Justification','Mode')
-        self.tree = ttk.Treeview(tab, columns=cols, show='headings', height=15)
-        wids = [50,100,80,100,150,100,100,80,200,100]
-        for c,w in zip(cols,wids):
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=w)
-        vsb = ttk.Scrollbar(tab, orient=tk.VERTICAL, command=self.tree.yview)
-        hsb = ttk.Scrollbar(tab, orient=tk.HORIZONTAL, command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self.tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        tab.grid_rowconfigure(0, weight=1)
-        tab.grid_columnconfigure(0, weight=1)
-
-        btnf = tk.Frame(main, bg='white')
-        btnf.pack(fill=tk.X, padx=10, pady=10)
-        tk.Button(btnf, text="📤 Exporter CSV", command=self.exporter_csv,
-                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
-
-    def charger_directions(self):
-        try:
-            dirs = self.app.db.get_all_directions()
-            self.filtre_dir['values'] = [''] + [d['nom'] for d in dirs]
-        except:
-            pass
-
-    def appliquer_filtres(self):
-        self.filtres = {
-            'date_debut': self.date_debut.get_date().strftime('%Y-%m-%d'),
-            'date_fin': self.date_fin.get_date().strftime('%Y-%m-%d'),
-            'matricule': self.filtre_mat.get().strip() or None,
-            'type_pointage': self.filtre_type.get().strip() or None,
-            'direction_nom': self.filtre_dir.get().strip() or None
-        }
-        self.charger_pointages()
-
-    def charger_pointages(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        try:
-            pts = self.app.db.get_pointages_filtres(**self.filtres)
-            for p in pts:
-                retard = f"{p['minutes_retard']} min" if p.get('minutes_retard',0) else '-'
-                heure = p['heure_pointage'][:5] if p['heure_pointage'] else ''
-                self.tree.insert('','end', values=(
-                    p['id'], p['date_pointage'], heure,
-                    p['matricule'], f"{p.get('prenom', '')} {p.get('nom', '')}",
-                    p['type_pointage'], p.get('quart_nom', ''),
-                    retard, p.get('justification', '') or '', p.get('mode', '')
-                ))
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de charger les pointages : {e}")
-
-    def pointer(self):
-        ident = self.entry_id.get().strip()
-        typ = self.type_var.get()
-        just = self.entry_just.get().strip()
-        if not ident:
-            messagebox.showwarning("Attention", "Saisissez un matricule ou badge")
-            return
-        pid, msg = self.app.db.add_pointage_avance(
-            matricule=ident, badge_id=ident,
-            type_pointage=typ, justification=just,
-            user_id=self.app.current_user['id']
-        )
-        if pid:
-            messagebox.showinfo("Succès", msg)
-            self.entry_id.delete(0, tk.END)
-            self.entry_just.delete(0, tk.END)
-            self.charger_pointages()
-        else:
-            messagebox.showerror("Erreur", msg)
-
-    def exporter_csv(self):
-        data = []
-        for i in self.tree.get_children():
-            data.append(self.tree.item(i)['values'])
-        if not data:
-            messagebox.showwarning("Attention", "Aucune donnée")
-            return
-        fn = filedialog.asksaveasfilename(defaultextension=".csv",
-                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
-        if fn:
-            try:
-                df = pd.DataFrame(data, columns=['ID','Date','Heure','Matricule','Nom','Type','Quart','Retard','Justif','Mode'])
-                if fn.endswith('.csv'):
-                    df.to_csv(fn, index=False, encoding='utf-8-sig')
-                else:
-                    df.to_excel(fn, index=False)
-                messagebox.showinfo("Succès", "Export terminé")
-            except Exception as e:
-                messagebox.showerror("Erreur", f"Erreur export: {e}")
-
-# ============================================================
-# GESTION HEURES SUPPLÉMENTAIRES
-# ============================================================
-class GestionHeuresSup:
-    def __init__(self, parent, app):
-        self.parent = parent
-        self.app = app
-        self.window = None
-
-    def ouvrir(self):
-        self.window = tk.Toplevel(self.parent)
-        self.window.title("Heures supplémentaires")
-        self.window.geometry("1100x650")
-        self.window.transient(self.parent)
-        self.window.grab_set()
-        self.window.configure(bg='#f0f0f0')
-        self.create_widgets()
-        self.charger_liste()
-
-    def create_widgets(self):
-        tk.Label(self.window, text="💰 HEURES SUPPLÉMENTAIRES",
-                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
-        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        add = tk.LabelFrame(main, text="➕ Nouvelle heure sup", font=('Arial',11,'bold'), bg='white')
-        add.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(add, text="Matricule:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
-        self.entry_mat = tk.Entry(add, width=15)
-        self.entry_mat.grid(row=0, column=1, padx=5, pady=5)
-        tk.Label(add, text="Début (AAAA-MM-JJ HH:MM):", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
-        self.entry_deb = tk.Entry(add, width=20)
-        self.entry_deb.grid(row=0, column=3, padx=5, pady=5)
-        self.entry_deb.insert(0, datetime.now().strftime('%Y-%m-%d %H:%M'))
-        tk.Label(add, text="Fin (AAAA-MM-JJ HH:MM):", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fin = tk.Entry(add, width=20)
-        self.entry_fin.grid(row=1, column=3, padx=5, pady=5)
-        self.entry_fin.insert(0, (datetime.now()+timedelta(hours=2)).strftime('%Y-%m-%d %H:%M'))
-        tk.Label(add, text="Type:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        self.type_sup = ttk.Combobox(add, values=['normale','nuit','weekend','jour_ferie'], width=15)
-        self.type_sup.set('normale')
-        self.type_sup.grid(row=1, column=1, padx=5, pady=5)
-        tk.Label(add, text="Motif:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.entry_motif = tk.Entry(add, width=50)
-        self.entry_motif.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky='w')
-        tk.Button(add, text="✅ Ajouter", command=self.ajouter,
-                  bg='#27ae60', fg='white').grid(row=2, column=4, padx=10, pady=5)
-
-        lst = tk.Frame(main, bg='white')
-        lst.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        cols = ('ID','Matricule','Nom','Début','Fin','Durée','Type','Statut','Motif')
-        self.tree = ttk.Treeview(lst, columns=cols, show='headings', height=15)
-        wids = [50,100,150,150,150,80,100,100,200]
-        for c,w in zip(cols,wids):
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=w)
-        vsb = ttk.Scrollbar(lst, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        btnf = tk.Frame(main, bg='white')
-        btnf.pack(fill=tk.X, padx=10, pady=10)
-        if self.app.current_user['role'] in ['admin','superviseur']:
-            tk.Button(btnf, text="✅ Approuver", command=self.approuver,
-                      bg='#3498db', fg='white').pack(side=tk.LEFT, padx=5)
-            tk.Button(btnf, text="❌ Refuser", command=self.refuser,
-                      bg='#e74c3c', fg='white').pack(side=tk.LEFT, padx=5)
-        tk.Button(btnf, text="📤 Exporter", command=self.exporter,
-                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
-
-    def ajouter(self):
-        mat = self.entry_mat.get().strip()
-        deb = self.entry_deb.get().strip()
-        fin = self.entry_fin.get().strip()
-        typ = self.type_sup.get()
-        motif = self.entry_motif.get().strip()
-        if not mat or not deb or not fin:
-            messagebox.showwarning("Attention", "Matricule, début et fin obligatoires")
-            return
-        pers = self.app.db.get_personnel_by_matricule(mat)
-        if not pers:
-            messagebox.showerror("Erreur", "Matricule inconnu")
-            return
-        try:
-            dt_deb = datetime.strptime(deb, '%Y-%m-%d %H:%M')
-            dt_fin = datetime.strptime(fin, '%Y-%m-%d %H:%M')
-            duree = (dt_fin - dt_deb).total_seconds() / 3600
-            if duree <= 0:
-                messagebox.showerror("Erreur", "La date de fin doit être postérieure")
-                return
-        except:
-            messagebox.showerror("Erreur", "Format de date incorrect (AAAA-MM-JJ HH:MM)")
-            return
-        taux = {'normale':1.25, 'nuit':1.5, 'weekend':1.75, 'jour_ferie':2.0}.get(typ, 1.25)
-        hs_id = self.app.db.add_heure_supplementaire(
-            pers['id'], mat, deb, fin, duree, typ, taux, motif
-        )
-        if hs_id:
-            messagebox.showinfo("Succès", "Heure supplémentaire ajoutée")
-            self.entry_mat.delete(0, tk.END)
-            self.entry_motif.delete(0, tk.END)
-            self.charger_liste()
-
-    def charger_liste(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        hs_list = self.app.db.get_heures_supplementaires()
-        for h in hs_list:
-            self.tree.insert('','end', values=(
-                h['id'], h['matricule'], f"{h.get('prenom', '')} {h.get('nom', '')}",
-                h['date_heure_debut'], h['date_heure_fin'],
-                f"{h['duree_heures']:.1f}h", h['type_heure_sup'],
-                h['statut'], h['motif'] or ''
-            ))
-
-    def approuver(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Sélectionnez une heure sup")
-            return
-        hid = self.tree.item(sel[0])['values'][0]
-        self.app.db.update_heure_sup_statut(hid, 'approuve', self.app.current_user['username'])
-        self.charger_liste()
-
-    def refuser(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Sélectionnez une heure sup")
-            return
-        hid = self.tree.item(sel[0])['values'][0]
-        self.app.db.update_heure_sup_statut(hid, 'refuse', self.app.current_user['username'])
-        self.charger_liste()
-
-    def exporter(self):
-        data = []
-        for i in self.tree.get_children():
-            data.append(self.tree.item(i)['values'])
-        if not data:
-            messagebox.showwarning("Attention", "Aucune donnée")
-            return
-        fn = filedialog.asksaveasfilename(defaultextension=".csv",
-                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
-        if fn:
-            try:
-                df = pd.DataFrame(data, columns=['ID','Matricule','Nom','Début','Fin','Durée','Type','Statut','Motif'])
-                if fn.endswith('.csv'):
-                    df.to_csv(fn, index=False, encoding='utf-8-sig')
-                else:
-                    df.to_excel(fn, index=False)
-                messagebox.showinfo("Succès", "Export terminé")
-            except Exception as e:
-                messagebox.showerror("Erreur", f"Erreur export: {e}")
-
-# ============================================================
-# GESTION JOURS FÉRIÉS
-# ============================================================
-class GestionJoursFeries:
-    def __init__(self, parent, app):
-        self.parent = parent
-        self.app = app
-        self.window = None
-
-    def ouvrir(self):
-        self.window = tk.Toplevel(self.parent)
-        self.window.title("Jours fériés")
-        self.window.geometry("600x500")
-        self.window.transient(self.parent)
-        self.window.grab_set()
-        self.window.configure(bg='#f0f0f0')
-        self.create_widgets()
-        self.charger_liste()
-
-    def create_widgets(self):
-        tk.Label(self.window, text="🎉 JOURS FÉRIÉS",
-                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
-        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        add = tk.Frame(main, bg='white')
-        add.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(add, text="Date:", bg='white').grid(row=0, column=0, padx=5, pady=5)
-        self.date_entry = DateEntry(add, width=12, date_pattern='yyyy-mm-dd')
-        self.date_entry.grid(row=0, column=1, padx=5, pady=5)
-        tk.Label(add, text="Nom:", bg='white').grid(row=0, column=2, padx=5, pady=5)
-        self.nom_entry = tk.Entry(add, width=30)
-        self.nom_entry.grid(row=0, column=3, padx=5, pady=5)
-        tk.Button(add, text="➕ Ajouter", command=self.ajouter,
-                  bg='#27ae60', fg='white').grid(row=0, column=4, padx=10, pady=5)
-
-        lst = tk.Frame(main, bg='white')
-        lst.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        cols = ('ID','Date','Nom','Année')
-        self.tree = ttk.Treeview(lst, columns=cols, show='headings', height=15)
-        for c in cols:
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=120)
-        vsb = ttk.Scrollbar(lst, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        btnf = tk.Frame(main, bg='white')
-        btnf.pack(fill=tk.X, padx=10, pady=10)
-        tk.Button(btnf, text="🗑️ Supprimer", command=self.supprimer,
-                  bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
-
-    def ajouter(self):
-        date = self.date_entry.get_date().strftime('%Y-%m-%d')
-        nom = self.nom_entry.get().strip()
-        if not nom:
-            messagebox.showwarning("Attention", "Veuillez saisir un nom")
-            return
-        self.app.db.add_jour_ferie(date, nom)
-        messagebox.showinfo("Succès", "Jour férié ajouté")
-        self.nom_entry.delete(0, tk.END)
-        self.charger_liste()
-
-    def charger_liste(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        jours = self.app.db.get_all_jours_feries()
-        for j in jours:
-            self.tree.insert('','end', values=(j['id'], j['date_jour'], j['nom'], j['date_jour'][:4]))
-
-    def supprimer(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Sélectionnez un jour férié")
-            return
-        jid = self.tree.item(sel[0])['values'][0]
-        if messagebox.askyesno("Confirmation", "Supprimer ce jour férié ?"):
-            self.app.db.delete_jour_ferie(jid)
-            self.charger_liste()
-
-
-# ============================================================
-# GESTION CONGÉS (ABSENCES) - VERSION CORRIGÉE
-# ============================================================
-class GestionAbsences:
-    def __init__(self, parent, app):
-        self.parent = parent
-        self.app = app
-        self.window = None
-        self.filtres = {}
-
-    def ouvrir(self):
-        self.window = tk.Toplevel(self.parent)
-        self.window.title("Gestion des congés")
-        self.window.geometry("1300x750")
-        self.window.transient(self.parent)
-        self.window.grab_set()
-        self.window.configure(bg='#f0f0f0')
-        self.create_widgets()
-        self.charger_demandes()
-        self.actualiser_statistiques()
-
-    def create_widgets(self):
-        tk.Label(self.window, text="📅 GESTION DES CONGÉS",
-                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
-
-        notebook = ttk.Notebook(self.window)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.tab_demande = ttk.Frame(notebook)
-        notebook.add(self.tab_demande, text="📝 Demande")
-        self.create_tab_demande()
-
-        self.tab_liste = ttk.Frame(notebook)
-        notebook.add(self.tab_liste, text="📋 Liste")
-        self.create_tab_liste()
-
-        if self.app.current_user['role'] in ['admin', 'superviseur']:
-            self.tab_approbation = ttk.Frame(notebook)
-            notebook.add(self.tab_approbation, text="✅ Approbation")
-            self.create_tab_approbation()
-
-        self.tab_stats = ttk.Frame(notebook)
-        notebook.add(self.tab_stats, text="📊 Statistiques")
-        self.create_tab_stats()
-
-    def create_tab_demande(self):
-        main = tk.Frame(self.tab_demande, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-
-        frame_agent = tk.LabelFrame(main, text="Agent concerné", font=('Arial',11,'bold'), bg='white')
-        frame_agent.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(frame_agent, text="Matricule :", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
-        self.demande_matricule = ttk.Combobox(frame_agent, width=15)
-        self.demande_matricule.grid(row=0, column=1, padx=5, pady=5)
-        self.charger_liste_matricules()
-        tk.Label(frame_agent, text="Nom complet :", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
-        self.demande_nom = tk.Entry(frame_agent, width=30, state='readonly')
-        self.demande_nom.grid(row=0, column=3, padx=5, pady=5)
-        self.demande_matricule.bind('<<ComboboxSelected>>', self.on_agent_selected)
-
-        frame_type = tk.LabelFrame(main, text="Type de congé", font=('Arial',11,'bold'), bg='white')
-        frame_type.pack(fill=tk.X, padx=10, pady=10)
-        types_conge = ['Congé annuel', 'Congé maladie', 'Congé maternité', 'Congé paternité',
-                       'Congé sans solde', 'Congé exceptionnel', 'RTT', 'Formation', 'Événement familial']
-        self.type_conge_var = tk.StringVar(value='Congé annuel')
-        ttk.Combobox(frame_type, textvariable=self.type_conge_var, values=types_conge,
-                     width=30, state='readonly').pack(padx=10, pady=10, anchor='w')
-
-        frame_periode = tk.LabelFrame(main, text="Période", font=('Arial',11,'bold'), bg='white')
-        frame_periode.pack(fill=tk.X, padx=10, pady=10)
-        per_f = tk.Frame(frame_periode, bg='white')
-        per_f.pack(padx=10, pady=10)
-        tk.Label(per_f, text="Du :", bg='white').pack(side=tk.LEFT, padx=5)
-        self.demande_date_debut = DateEntry(per_f, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
-        self.demande_date_debut.pack(side=tk.LEFT, padx=5)
-        self.demande_date_debut.set_date(datetime.now())
-        tk.Label(per_f, text="au :", bg='white').pack(side=tk.LEFT, padx=5)
-        self.demande_date_fin = DateEntry(per_f, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
-        self.demande_date_fin.pack(side=tk.LEFT, padx=5)
-        self.demande_date_fin.set_date(datetime.now() + timedelta(days=7))
-        tk.Label(per_f, text="Durée :", bg='white').pack(side=tk.LEFT, padx=(20,5))
-        self.demande_duree = tk.Label(per_f, text="7 jours", font=('Arial',11,'bold'), fg='#27ae60', bg='white')
-        self.demande_duree.pack(side=tk.LEFT, padx=5)
-        tk.Button(per_f, text="Calculer", command=self.calculer_duree,
-                  bg='#3498db', fg='white').pack(side=tk.LEFT, padx=10)
-
-        frame_solde = tk.LabelFrame(main, text="Solde de congés annuels", font=('Arial',11,'bold'), bg='white')
-        frame_solde.pack(fill=tk.X, padx=10, pady=10)
-        self.solde_label = tk.Label(frame_solde, text="---", font=('Arial',11), fg='#e67e22', bg='white')
-        self.solde_label.pack(padx=10, pady=10, anchor='w')
-
-        frame_motif = tk.LabelFrame(main, text="Motif / Remarques", font=('Arial',11,'bold'), bg='white')
-        frame_motif.pack(fill=tk.X, padx=10, pady=10)
-        self.demande_motif = tk.Text(frame_motif, height=4, width=70)
-        self.demande_motif.pack(padx=10, pady=10)
-
-        frame_justif = tk.LabelFrame(main, text="Justificatif (optionnel)", font=('Arial',11,'bold'), bg='white')
-        frame_justif.pack(fill=tk.X, padx=10, pady=10)
-        jf = tk.Frame(frame_justif, bg='white')
-        jf.pack(padx=10, pady=10, fill=tk.X)
-        self.justificatif_path = tk.StringVar()
-        tk.Entry(jf, textvariable=self.justificatif_path, width=50).pack(side=tk.LEFT, padx=5)
-        tk.Button(jf, text="📎 Parcourir", command=self.parcourir_justificatif,
-                  bg='#95a5a6', fg='white').pack(side=tk.LEFT, padx=5)
-
-        btn_frame = tk.Frame(main, bg='white')
-        btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="📨 SOUMETTRE LA DEMANDE", command=self.soumettre_demande,
-                  bg='#27ae60', fg='white', font=('Arial',12,'bold'),
-                  width=30, height=2).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="🗑️ EFFACER", command=self.effacer_formulaire,
-                  bg='#e74c3c', fg='white', font=('Arial',10),
-                  width=15, height=1).pack(side=tk.LEFT, padx=10)
-
-    def create_tab_liste(self):
-        # ... (code inchangé, utilise les méthodes de db)
-        main = tk.Frame(self.tab_liste, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-
-        filt_frame = tk.Frame(main, bg='white')
-        filt_frame.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(filt_frame, text="Période du :", bg='white').grid(row=0, column=0, padx=5, pady=5)
-        self.filtre_date_debut = DateEntry(filt_frame, width=12, date_pattern='yyyy-mm-dd')
-        self.filtre_date_debut.grid(row=0, column=1, padx=5, pady=5)
-        self.filtre_date_debut.set_date(date.today().replace(day=1))
-        tk.Label(filt_frame, text="au :", bg='white').grid(row=0, column=2, padx=5, pady=5)
-        self.filtre_date_fin = DateEntry(filt_frame, width=12, date_pattern='yyyy-mm-dd')
-        self.filtre_date_fin.grid(row=0, column=3, padx=5, pady=5)
-        self.filtre_date_fin.set_date(date.today())
-        tk.Label(filt_frame, text="Statut :", bg='white').grid(row=0, column=4, padx=5, pady=5)
-        self.filtre_statut = ttk.Combobox(filt_frame, values=['Tous', 'en_attente', 'approuve', 'refuse'], width=15)
-        self.filtre_statut.grid(row=0, column=5, padx=5, pady=5)
-        self.filtre_statut.set('Tous')
-        tk.Label(filt_frame, text="Matricule :", bg='white').grid(row=1, column=0, padx=5, pady=5)
-        self.filtre_matricule = tk.Entry(filt_frame, width=15)
-        self.filtre_matricule.grid(row=1, column=1, padx=5, pady=5)
-        tk.Label(filt_frame, text="Type :", bg='white').grid(row=1, column=2, padx=5, pady=5)
-        self.filtre_type = ttk.Combobox(filt_frame, values=['Tous', 'Congé annuel', 'Congé maladie',
-                                                             'Congé maternité', 'Congé paternité',
-                                                             'Congé sans solde', 'Congé exceptionnel',
-                                                             'RTT', 'Formation', 'Événement familial'], width=20)
-        self.filtre_type.grid(row=1, column=3, padx=5, pady=5)
-        self.filtre_type.set('Tous')
-        tk.Button(filt_frame, text="🔍 Filtrer", command=self.appliquer_filtres,
-                  bg='#3498db', fg='white').grid(row=1, column=4, padx=10, pady=5)
-        tk.Button(filt_frame, text="🔄 Réinitialiser", command=self.charger_demandes,
-                  bg='#95a5a6', fg='white').grid(row=1, column=5, padx=5, pady=5)
-
-        tree_frame = tk.Frame(main, bg='white')
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        cols = ('ID', 'Matricule', 'Agent', 'Type', 'Début', 'Fin', 'Durée', 'Statut', 'Motif', 'Date demande')
-        self.tree_liste = ttk.Treeview(tree_frame, columns=cols, show='headings', height=15)
-        col_widths = [50, 100, 150, 150, 100, 100, 70, 100, 200, 120]
-        for c, w in zip(cols, col_widths):
-            self.tree_liste.heading(c, text=c)
-            self.tree_liste.column(c, width=w)
-        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree_liste.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.tree_liste.xview)
-        self.tree_liste.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self.tree_liste.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
-        self.tree_liste.bind('<Double-Button-1>', self.afficher_details_demande)
-
-        btn_export = tk.Frame(main, bg='white')
-        btn_export.pack(fill=tk.X, padx=10, pady=10)
-        tk.Button(btn_export, text="📤 Exporter CSV", command=self.exporter_liste,
-                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
-
-    def create_tab_approbation(self):
-        # ... (code inchangé)
-        main = tk.Frame(self.tab_approbation, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        tk.Label(main, text="Demandes en attente d'approbation",
-                font=('Arial',12,'bold'), bg='white', fg='#2c3e50').pack(pady=10)
-        tree_frame = tk.Frame(main, bg='white')
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        cols = ('ID', 'Matricule', 'Agent', 'Type', 'Début', 'Fin', 'Durée', 'Motif', 'Date demande')
-        self.tree_attente = ttk.Treeview(tree_frame, columns=cols, show='headings', height=12)
-        col_widths = [50, 100, 150, 150, 100, 100, 70, 200, 120]
-        for c, w in zip(cols, col_widths):
-            self.tree_attente.heading(c, text=c)
-            self.tree_attente.column(c, width=w)
-        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree_attente.yview)
-        self.tree_attente.configure(yscrollcommand=vsb.set)
-        self.tree_attente.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        btn_frame = tk.Frame(main, bg='white')
-        btn_frame.pack(fill=tk.X, padx=10, pady=20)
-        tk.Button(btn_frame, text="✅ Approuver", command=self.approuver_demande,
-                  bg='#27ae60', fg='white', font=('Arial',11,'bold'),
-                  width=15, height=2).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="❌ Refuser", command=self.refuser_demande,
-                  bg='#e74c3c', fg='white', font=('Arial',11,'bold'),
-                  width=15, height=2).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="📄 Détails", command=self.voir_details_attente,
-                  bg='#3498db', fg='white', width=12).pack(side=tk.LEFT, padx=10)
-        self.charger_demandes_attente()
-
-    def create_tab_stats(self):
-        # ... (code inchangé)
-        main = tk.Frame(self.tab_stats, bg='white', relief=tk.RAISED, bd=2)
-        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        cards_frame = tk.Frame(main, bg='white')
-        cards_frame.pack(pady=10)
-        self.stat_total = tk.StringVar(value='0')
-        self.stat_attente = tk.StringVar(value='0')
-        self.stat_approuve = tk.StringVar(value='0')
-        self.stat_refuse = tk.StringVar(value='0')
-        self.creer_carte(cards_frame, "📊 Total demandes", self.stat_total, "#3498db", 0)
-        self.creer_carte(cards_frame, "⏳ En attente", self.stat_attente, "#f39c12", 1)
-        self.creer_carte(cards_frame, "✅ Approuvées", self.stat_approuve, "#27ae60", 2)
-        self.creer_carte(cards_frame, "❌ Refusées", self.stat_refuse, "#e74c3c", 3)
-        graph_frame = tk.Frame(main, bg='white')
-        graph_frame.pack(fill=tk.BOTH, expand=True, pady=20)
-        self.figure = plt.Figure(figsize=(10,4), dpi=100)
-        self.figure.subplots_adjust(hspace=0.4)
-        self.ax1 = self.figure.add_subplot(121)
-        self.ax2 = self.figure.add_subplot(122)
-        self.canvas = FigureCanvasTkAgg(self.figure, graph_frame)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        tk.Button(main, text="🔄 Actualiser", command=self.actualiser_statistiques,
-                  bg='#3498db', fg='white').pack(pady=10)
-
-    def creer_carte(self, parent, titre, variable, couleur, col):
-        card = tk.Frame(parent, bg=couleur, relief=tk.RAISED, bd=2, width=180, height=90)
-        card.grid(row=0, column=col, padx=10, pady=10)
-        card.grid_propagate(False)
-        tk.Label(card, text=titre, font=('Arial',10), bg=couleur, fg='white').pack(pady=(10,0))
-        tk.Label(card, textvariable=variable, font=('Arial',20,'bold'), bg=couleur, fg='white').pack()
-
-    # Méthodes corrigées
-    def charger_liste_matricules(self):
-        try:
-            pers = self.app.db.get_personnel()
-            matricules = [p['matricule'] for p in pers if p.get('statut') == 'actif']
-            self.demande_matricule['values'] = matricules
-        except Exception as e:
-            print(f"Erreur chargement matricules: {e}")
-
-    def on_agent_selected(self, event=None):
-        mat = self.demande_matricule.get()
-        if mat:
-            pers = self.app.db.get_personnel_by_matricule(mat)
-            if pers:
-                self.demande_nom.config(state='normal')
-                self.demande_nom.delete(0, tk.END)
-                self.demande_nom.insert(0, f"{pers['prenom']} {pers['nom']}")
-                self.demande_nom.config(state='readonly')
-                self.calculer_solde(mat)
-
-    def calculer_solde(self, matricule):
-        try:
-            quota = 25
-            annee = datetime.now().year
-            with self.app.db.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT SUM(duree_jours) as total
-                    FROM conges
-                    WHERE matricule = ? AND type_conge = 'Congé annuel'
-                    AND statut IN ('approuve', 'en_attente')
-                    AND strftime('%Y', date_debut) = ?
-                ''', (matricule, str(annee)))
-                row = cursor.fetchone()
-                pris = row[0] if row and row[0] else 0
-                reste = quota - pris
-                self.solde_label.config(text=f"{reste} jours restants sur {quota} jours (année {annee})")
-        except Exception as e:
-            self.solde_label.config(text="Erreur de calcul du solde")
-            print(f"Erreur solde: {e}")
-
-    def calculer_duree(self):
-        try:
-            debut = self.demande_date_debut.get_date()
-            fin = self.demande_date_fin.get_date()
-            duree = (fin - debut).days + 1
-            if duree > 0:
-                self.demande_duree.config(text=f"{duree} jours")
-            else:
-                self.demande_duree.config(text="0 jour")
-                messagebox.showwarning("Attention", "La date de fin doit être postérieure ou égale à la date de début")
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur de calcul: {e}")
-
-    def parcourir_justificatif(self):
-        filename = filedialog.askopenfilename(
-            title="Sélectionner un justificatif",
-            filetypes=[("PDF files", "*.pdf"), ("Images", "*.jpg *.png"), ("Tous", "*.*")]
-        )
-        if filename:
-            self.justificatif_path.set(filename)
-
-    def soumettre_demande(self):
-        mat = self.demande_matricule.get().strip()
-        if not mat:
-            messagebox.showwarning("Validation", "Veuillez sélectionner un agent")
-            return
-        type_conge = self.type_conge_var.get()
-        if not type_conge:
-            messagebox.showwarning("Validation", "Veuillez sélectionner un type de congé")
-            return
-        debut = self.demande_date_debut.get_date()
-        fin = self.demande_date_fin.get_date()
-        if debut > fin:
-            messagebox.showwarning("Validation", "La date de fin doit être postérieure ou égale à la date de début")
-            return
-        duree = (fin - debut).days + 1
-        if duree <= 0:
-            messagebox.showwarning("Validation", "La durée doit être positive")
-            return
-        motif = self.demande_motif.get("1.0", tk.END).strip()
-        justif = self.justificatif_path.get().strip()
-        pers = self.app.db.get_personnel_by_matricule(mat)
-        if not pers:
-            messagebox.showerror("Erreur", "Matricule inconnu")
-            return
-        data = (
-            pers['id'],
-            mat,
-            type_conge,
-            debut.strftime('%Y-%m-%d'),
-            fin.strftime('%Y-%m-%d'),
-            duree,
-            motif,
-            justif,
-            'en_attente',
-            date.today().strftime('%Y-%m-%d')
-        )
-        try:
-            self.app.db.add_conge(data)
-            messagebox.showinfo("Succès", "Demande de congé soumise avec succès")
-            self.effacer_formulaire()
-            self.charger_demandes()
-            self.charger_demandes_attente()
-            self.actualiser_statistiques()
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur lors de l'enregistrement: {e}")
-
-    def effacer_formulaire(self):
-        self.demande_matricule.set('')
-        self.demande_nom.config(state='normal')
-        self.demande_nom.delete(0, tk.END)
-        self.demande_nom.config(state='readonly')
-        self.type_conge_var.set('Congé annuel')
-        self.demande_date_debut.set_date(datetime.now())
-        self.demande_date_fin.set_date(datetime.now() + timedelta(days=7))
-        self.demande_duree.config(text="7 jours")
-        self.demande_motif.delete("1.0", tk.END)
-        self.justificatif_path.set("")
-        self.solde_label.config(text="---")
-
-    def charger_demandes(self):
-        for i in self.tree_liste.get_children():
-            self.tree_liste.delete(i)
-        try:
-            demandes = self.app.db.get_conges(self.filtres)
-            for d in demandes:
-                self.tree_liste.insert('', 'end', values=(
-                    d['id'],
-                    d['matricule'],
-                    f"{d['prenom']} {d['nom']}",
-                    d['type_conge'],
-                    d['date_debut'],
-                    d['date_fin'],
-                    d['duree_jours'],
-                    self._format_statut(d['statut']),
-                    d['motif'][:50] + '...' if d['motif'] and len(d['motif']) > 50 else d['motif'],
-                    d.get('date_demande', d['created_at'])[:10]
-                ))
-        except Exception as e:
-            print(f"Erreur chargement demandes: {e}")
-
-    def charger_demandes_attente(self):
-        if not hasattr(self, 'tree_attente'):
-            return
-        for i in self.tree_attente.get_children():
-            self.tree_attente.delete(i)
-        try:
-            filtres = {'statut': 'en_attente'}
-            demandes = self.app.db.get_conges(filtres)
-            for d in demandes:
-                self.tree_attente.insert('', 'end', values=(
-                    d['id'],
-                    d['matricule'],
-                    f"{d['prenom']} {d['nom']}",
-                    d['type_conge'],
-                    d['date_debut'],
-                    d['date_fin'],
-                    d['duree_jours'],
-                    d['motif'][:50] + '...' if d['motif'] and len(d['motif']) > 50 else d['motif'],
-                    d.get('date_demande', d['created_at'])[:10]
-                ))
-        except Exception as e:
-            print(f"Erreur chargement demandes attente: {e}")
-
-    def appliquer_filtres(self):
-        self.filtres = {}
-        date_debut = self.filtre_date_debut.get_date().strftime('%Y-%m-%d')
-        date_fin = self.filtre_date_fin.get_date().strftime('%Y-%m-%d')
-        self.filtres['date_debut'] = date_debut
-        self.filtres['date_fin'] = date_fin
-        statut = self.filtre_statut.get()
-        if statut != 'Tous':
-            self.filtres['statut'] = statut
-        mat = self.filtre_matricule.get().strip()
-        if mat:
-            self.filtres['matricule'] = mat
-        typ = self.filtre_type.get()
-        if typ != 'Tous':
-            self.filtres['type_conge'] = typ
-        self.charger_demandes()
-
-    def approuver_demande(self):
-        sel = self.tree_attente.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Veuillez sélectionner une demande")
-            return
-        item = self.tree_attente.item(sel[0])
-        demande_id = item['values'][0]
-        if messagebox.askyesno("Confirmation", "Approuver cette demande de congé ?"):
-            if self.app.db.update_conge_statut(demande_id, 'approuve', self.app.current_user['username']):
-                messagebox.showinfo("Succès", "Demande approuvée")
-                self.charger_demandes_attente()
-                self.charger_demandes()
-                self.actualiser_statistiques()
-            else:
-                messagebox.showerror("Erreur", "Échec de l'approbation")
-
-    def refuser_demande(self):
-        sel = self.tree_attente.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Veuillez sélectionner une demande")
-            return
-        item = self.tree_attente.item(sel[0])
-        demande_id = item['values'][0]
-        motif_refus = tk.simpledialog.askstring("Motif du refus", "Veuillez indiquer le motif du refus :")
-        if motif_refus is not None:
-            if self.app.db.update_conge_statut(demande_id, 'refuse', self.app.current_user['username']):
-                messagebox.showinfo("Succès", "Demande refusée")
-                self.charger_demandes_attente()
-                self.charger_demandes()
-                self.actualiser_statistiques()
-            else:
-                messagebox.showerror("Erreur", "Échec du refus")
-
-    def afficher_details_demande(self, event=None):
-        sel = self.tree_liste.selection()
-        if not sel:
-            return
-        item = self.tree_liste.item(sel[0])
-        demande_id = item['values'][0]
-        self._afficher_details(demande_id)
-
-    def voir_details_attente(self):
-        sel = self.tree_attente.selection()
-        if not sel:
-            messagebox.showwarning("Attention", "Sélectionnez une demande")
-            return
-        item = self.tree_attente.item(sel[0])
-        demande_id = item['values'][0]
-        self._afficher_details(demande_id)
-
-    def _afficher_details(self, demande_id):
-        try:
-            with self.app.db.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT c.*, p.nom, p.prenom, p.fonction,
-                           dir.nom_direction as direction,
-                           s.nom_service as service
-                    FROM conges c
-                    JOIN personnel p ON c.personnel_id = p.id
-                    LEFT JOIN directions dir ON p.direction_id = dir.id
-                    LEFT JOIN services s ON p.service_id = s.id
-                    WHERE c.id = ?
-                ''', (demande_id,))
-                d = cursor.fetchone()
-                if not d:
-                    messagebox.showerror("Erreur", "Demande introuvable")
-                    return
-            details = f"""
-            📋 DÉTAILS DE LA DEMANDE DE CONGÉ
-
-            👤 AGENT :
-            • Matricule : {d['matricule']}
-            • Nom : {d['prenom']} {d['nom']}
-            • Fonction : {d['fonction']}
-            • Direction : {d['direction'] or '-'}
-            • Service : {d['service'] or '-'}
-
-            📅 PÉRIODE :
-            • Type de congé : {d['type_conge']}
-            • Du : {d['date_debut']} au {d['date_fin']}
-            • Durée : {d['duree_jours']} jours
-
-            📝 MOTIF :
-            {d['motif'] or 'Aucun motif'}
-
-            📎 JUSTIFICATIF :
-            {d['justificatif'] or 'Aucun justificatif'}
-
-            📊 STATUT :
-            • Statut : {self._format_statut(d['statut'])}
-            • Date de la demande : {d.get('date_demande', d['created_at'])[:10]}
-            • Approuvé par : {d['approuve_par'] or '-'}
-            • Date d'approbation : {d['date_approbation'][:10] if d['date_approbation'] else '-'}
-            """
-            messagebox.showinfo("Détails de la demande", details)
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible d'afficher les détails: {e}")
-
-    def actualiser_statistiques(self):
-        try:
-            with self.app.db.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM conges")
-                total = cursor.fetchone()[0] or 0
-                self.stat_total.set(str(total))
-                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='en_attente'")
-                attente = cursor.fetchone()[0] or 0
-                self.stat_attente.set(str(attente))
-                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='approuve'")
-                approuve = cursor.fetchone()[0] or 0
-                self.stat_approuve.set(str(approuve))
-                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='refuse'")
-                refuse = cursor.fetchone()[0] or 0
-                self.stat_refuse.set(str(refuse))
-
-                cursor.execute('''
-                    SELECT type_conge, COUNT(*) as cnt
-                    FROM conges
-                    GROUP BY type_conge
-                    ORDER BY cnt DESC
-                    LIMIT 6
-                ''')
-                data_type = cursor.fetchall()
-                self.ax1.clear()
-                if data_type:
-                    types = [d['type_conge'] for d in data_type]
-                    counts = [d['cnt'] for d in data_type]
-                    self.ax1.bar(types, counts, color='#3498db')
-                    self.ax1.set_title('Par type de congé')
-                    self.ax1.tick_params(axis='x', rotation=45)
-                else:
-                    self.ax1.text(0.5, 0.5, 'Aucune donnée', ha='center', va='center')
-                    self.ax1.set_title('Par type de congé')
-
-                self.ax2.clear()
-                labels = ['En attente', 'Approuvées', 'Refusées']
-                valeurs = [attente, approuve, refuse]
-                couleurs = ['#f39c12', '#27ae60', '#e74c3c']
-                if sum(valeurs) > 0:
-                    self.ax2.pie(valeurs, labels=labels, colors=couleurs, autopct='%1.1f%%')
-                    self.ax2.set_title('Répartition par statut')
-                else:
-                    self.ax2.text(0.5, 0.5, 'Aucune donnée', ha='center', va='center')
-                    self.ax2.set_title('Répartition par statut')
-                self.canvas.draw()
-        except Exception as e:
-            print(f"Erreur stats congés: {e}")
-
-    def exporter_liste(self):
-        data = []
-        for i in self.tree_liste.get_children():
-            data.append(self.tree_liste.item(i)['values'])
-        if not data:
-            messagebox.showwarning("Attention", "Aucune donnée à exporter")
-            return
-        fn = filedialog.asksaveasfilename(defaultextension=".csv",
-                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
-        if fn:
-            try:
-                df = pd.DataFrame(data, columns=['ID','Matricule','Agent','Type','Début','Fin','Durée','Statut','Motif','Date demande'])
-                if fn.endswith('.csv'):
-                    df.to_csv(fn, index=False, encoding='utf-8-sig')
-                else:
-                    df.to_excel(fn, index=False)
-                messagebox.showinfo("Succès", f"Export terminé vers {fn}")
-            except Exception as e:
-                messagebox.showerror("Erreur", f"Erreur export: {e}")
-
-    @staticmethod
-    def _format_statut(statut):
-        if statut == 'en_attente':
-            return '⏳ En attente'
-        elif statut == 'approuve':
-            return '✅ Approuvé'
-        elif statut == 'refuse':
-            return '❌ Refusé'
-        return statut
-
 # ============================================================
 # Onglet 3 : Gestion des tolérances et horaires
 # ============================================================
@@ -3191,7 +2369,7 @@ class GestionTolerances:
         self.window = None
         self.current_agent_id = None
 
-    def ouvrir_interface(self):
+    def ouvrir(self):  # renommé de ouvrir_interface
         self.window = tk.Toplevel(self.parent)
         self.window.title("Gestion des tolérances")
         self.window.geometry("1200x700")
@@ -3750,6 +2928,7 @@ Total: {res['total']}
         if self.window:
             self.window.destroy()
 
+
 # ============================================================
 # PERSONNEL DIALOG (Ajout / Modification)
 # ============================================================
@@ -3782,6 +2961,8 @@ class PersonnelDialog:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        # Charger les listes AVANT de charger les données (pour avoir les mappings)
+        self.charger_listes()
         self.create_widgets()
         if personnel_id:
             self.load_data()
@@ -3811,7 +2992,7 @@ class PersonnelDialog:
         self.entry_matricule = tk.Entry(form, textvariable=self.matricule_var, width=20)
         self.entry_matricule.grid(row=row, column=1, pady=5, padx=10)
         if self.personnel_id:
-            self.entry_matricule.config(state='modified')
+            self.entry_matricule.config(state='readonly')  # empêcher modification du matricule
         row += 1
 
         tk.Label(form, text="Badge ID :", bg='white').grid(row=row, column=0, sticky='w', pady=5, padx=20)
@@ -4018,8 +3199,6 @@ class PersonnelDialog:
                   bg='#e74c3c', fg='white', font=('Arial',10),
                   width=15, height=1).pack(side=tk.LEFT, padx=10)
 
-        self.charger_listes()
-
     def charger_listes(self):
         try:
             activites = self.app.db.get_all_activites()
@@ -4152,7 +3331,6 @@ class PersonnelDialog:
         departement_id = self.id_maps.get('departement', {}).get(self.departement_var.get())
         service_id = self.id_maps.get('service', {}).get(self.service_var.get())
         equipe_id = self.id_maps.get('equipe', {}).get(self.equipe_var.get())
-        quart_id = self.id_maps.get('quart', {}).get(self.quart_var.get())
 
         photo = None
         if hasattr(self, 'photo_path') and self.photo_path:
@@ -4161,9 +3339,12 @@ class PersonnelDialog:
             ext = os.path.splitext(self.photo_path)[1]
             nom_fichier = f"photo_{self.matricule_var.get()}_{datetime.now().strftime('%Y%m%d%H%M%S')}{ext}"
             chemin = os.path.join(dossier, nom_fichier)
-            img = Image.open(self.photo_path)
-            img.save(chemin)
-            photo = chemin
+            try:
+                img = Image.open(self.photo_path)
+                img.save(chemin)
+                photo = chemin
+            except:
+                photo = self.photo_path  # fallback
         else:
             photo = self.photo_actuelle if hasattr(self, 'photo_actuelle') else None
 
@@ -4362,6 +3543,486 @@ class EditProfileDialog:
 
 
 # ============================================================
+# Onglet 3 : Gestion des tolérances et horaires
+# ============================================================
+class GestionTolerances:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.window = None
+        self.current_agent_id = None
+
+    def ouvrir_interface(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Gestion des tolérances")
+        self.window.geometry("1200x700")
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.configure(bg='#f0f0f0')
+
+        tk.Label(self.window, text="🎯 GESTION DES TOLÉRANCES ET HORAIRES",
+                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
+
+        notebook = ttk.Notebook(self.window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.tab_global = ttk.Frame(notebook)
+        notebook.add(self.tab_global, text="⚙️ Paramètres globaux")
+        self.create_tab_global()
+
+        self.tab_individuel = ttk.Frame(notebook)
+        notebook.add(self.tab_individuel, text="👤 Tolérances individuelles")
+        self.create_tab_individuel()
+
+        self.tab_analyse = ttk.Frame(notebook)
+        notebook.add(self.tab_analyse, text="📊 Analyse des retards")
+        self.create_tab_analyse()
+
+    def create_tab_global(self):
+        main = tk.Frame(self.tab_global, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        frame_horaires = tk.LabelFrame(main, text="Horaires de travail standard",
+                                       font=('Arial',11,'bold'), bg='white')
+        frame_horaires.pack(fill=tk.X, padx=10, pady=10)
+        grid_h = tk.Frame(frame_horaires, bg='white')
+        grid_h.pack(padx=10, pady=10)
+        tk.Label(grid_h, text="Heure de début :", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.global_debut = tk.Entry(grid_h, width=10)
+        self.global_debut.grid(row=0, column=1, padx=5, pady=5)
+        self.global_debut.insert(0, self.app.db.get_parametre('heure_debut_journee', '08:00:00')[:5])
+        tk.Label(grid_h, text="Heure de fin :", bg='white').grid(row=0, column=2, padx=15, pady=5, sticky='w')
+        self.global_fin = tk.Entry(grid_h, width=10)
+        self.global_fin.grid(row=0, column=3, padx=5, pady=5)
+        self.global_fin.insert(0, self.app.db.get_parametre('heure_fin_journee', '17:00:00')[:5])
+        tk.Label(grid_h, text="Durée de pause :", bg='white').grid(row=0, column=4, padx=15, pady=5, sticky='w')
+        self.global_pause = tk.Entry(grid_h, width=10)
+        self.global_pause.grid(row=0, column=5, padx=5, pady=5)
+        self.global_pause.insert(0, self.app.db.get_parametre('duree_pause', '01:00:00')[:5])
+
+        frame_tol = tk.LabelFrame(main, text="Tolérances par défaut (minutes)",
+                                  font=('Arial',11,'bold'), bg='white')
+        frame_tol.pack(fill=tk.X, padx=10, pady=10)
+        grid_t = tk.Frame(frame_tol, bg='white')
+        grid_t.pack(padx=10, pady=10)
+        tk.Label(grid_t, text="Retard à l'entrée :", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.global_tol_entree = tk.Spinbox(grid_t, from_=0, to=120, width=8)
+        self.global_tol_entree.grid(row=0, column=1, padx=5, pady=5)
+        self.global_tol_entree.delete(0, tk.END)
+        self.global_tol_entree.insert(0, self.app.db.get_parametre('tolerance_retard_globale', '10'))
+        tk.Label(grid_t, text="Départ anticipé :", bg='white').grid(row=0, column=2, padx=15, pady=5, sticky='w')
+        self.global_tol_sortie = tk.Spinbox(grid_t, from_=0, to=120, width=8)
+        self.global_tol_sortie.grid(row=0, column=3, padx=5, pady=5)
+        self.global_tol_sortie.delete(0, tk.END)
+        self.global_tol_sortie.insert(0, self.app.db.get_parametre('tolerance_depart_anticipe', '10'))
+
+        frame_policy = tk.LabelFrame(main, text="Politique de gestion des retards",
+                                     font=('Arial',11,'bold'), bg='white')
+        frame_policy.pack(fill=tk.X, padx=10, pady=10)
+        grid_p = tk.Frame(frame_policy, bg='white')
+        grid_p.pack(padx=10, pady=10)
+        tk.Label(grid_p, text="Seuil de justification (minutes) :", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.seuil_justif = tk.Spinbox(grid_p, from_=0, to=240, width=8)
+        self.seuil_justif.grid(row=0, column=1, padx=5, pady=5)
+        self.seuil_justif.delete(0, tk.END)
+        self.seuil_justif.insert(0, self.app.db.get_parametre('seuil_justification_retard', '15'))
+        tk.Label(grid_p, text="Pénalité par minute non justifiée (€) :", bg='white').grid(row=0, column=2, padx=15, pady=5, sticky='w')
+        self.penalite = tk.Entry(grid_p, width=8)
+        self.penalite.grid(row=0, column=3, padx=5, pady=5)
+        self.penalite.insert(0, self.app.db.get_parametre('penalite_retard', '0.50'))
+        self.arrondi_var = tk.BooleanVar(value=self.app.db.get_parametre('arrondir_retard', '0') == '1')
+        tk.Checkbutton(grid_p, text="Arrondir les retards à 5 minutes supérieures",
+                       variable=self.arrondi_var, bg='white').grid(row=1, column=0, columnspan=4, padx=5, pady=5, sticky='w')
+
+        btn_frame = tk.Frame(main, bg='white')
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text="💾 Sauvegarder les paramètres globaux",
+                  command=self.sauvegarder_parametres_globaux,
+                  bg='#27ae60', fg='white', font=('Arial',11,'bold'),
+                  width=30, height=2).pack()
+        tk.Button(btn_frame, text="🔄 Appliquer à tous les agents",
+                  command=self.appliquer_a_tous,
+                  bg='#3498db', fg='white', font=('Arial',10),
+                  width=25, height=1).pack(pady=5)
+
+    def sauvegarder_parametres_globaux(self):
+        try:
+            self.app.db.set_parametre('heure_debut_journee', self.global_debut.get().strip() + ':00')
+            self.app.db.set_parametre('heure_fin_journee', self.global_fin.get().strip() + ':00')
+            self.app.db.set_parametre('duree_pause', self.global_pause.get().strip() + ':00')
+            self.app.db.set_parametre('tolerance_retard_globale', self.global_tol_entree.get().strip())
+            self.app.db.set_parametre('tolerance_depart_anticipe', self.global_tol_sortie.get().strip())
+            self.app.db.set_parametre('seuil_justification_retard', self.seuil_justif.get().strip())
+            self.app.db.set_parametre('penalite_retard', self.penalite.get().strip())
+            self.app.db.set_parametre('arrondir_retard', '1' if self.arrondi_var.get() else '0')
+            messagebox.showinfo("Succès", "Paramètres globaux sauvegardés")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
+
+    def appliquer_a_tous(self):
+        if messagebox.askyesno("Confirmation", "Appliquer les tolérances par défaut à TOUS les agents ?\nCette action écrasera leurs tolérances individuelles actuelles."):
+            try:
+                tol_entree = int(self.global_tol_entree.get())
+                tol_sortie = int(self.global_tol_sortie.get())
+                heure_entree = self.global_debut.get().strip() + ':00'
+                heure_sortie = self.global_fin.get().strip() + ':00'
+                with self.app.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE personnel SET
+                            heure_entree_theorique = ?,
+                            heure_sortie_theorique = ?,
+                            tolerance_entree = ?,
+                            tolerance_sortie = ?
+                    ''', (heure_entree, heure_sortie, tol_entree, tol_sortie))
+                    conn.commit()
+                messagebox.showinfo("Succès", f"{cursor.rowcount} agents mis à jour.")
+                if hasattr(self, 'tree_agents'):
+                    self.charger_liste_agents()
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur : {e}")
+
+    def create_tab_individuel(self):
+        main = tk.Frame(self.tab_individuel, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        search_frame = tk.Frame(main, bg='white')
+        search_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(search_frame, text="Rechercher un agent :", bg='white', font=('Arial',10,'bold')).pack(side=tk.LEFT, padx=5)
+        self.search_var = tk.StringVar()
+        self.search_entry = tk.Entry(search_frame, textvariable=self.search_var, width=30)
+        self.search_entry.pack(side=tk.LEFT, padx=5)
+        self.search_entry.bind('<Return>', lambda e: self.charger_liste_agents())
+        tk.Button(search_frame, text="🔍", command=self.charger_liste_agents,
+                  bg='#3498db', fg='white').pack(side=tk.LEFT, padx=5)
+        tk.Button(search_frame, text="🔄 Réinitialiser", command=self.reset_recherche,
+                  bg='#95a5a6', fg='white').pack(side=tk.LEFT, padx=5)
+
+        content_frame = tk.Frame(main, bg='white')
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        list_frame = tk.Frame(content_frame, bg='white')
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        cols = ('ID', 'Matricule', 'Nom', 'Prénom', 'Entrée th.', 'Sortie th.', 'Tol. E', 'Tol. S', 'Quart')
+        self.tree_agents = ttk.Treeview(list_frame, columns=cols, show='headings', height=20)
+        col_widths = [50,100,120,120,100,100,80,80,100]
+        for c,w in zip(cols,col_widths):
+            self.tree_agents.heading(c, text=c)
+            self.tree_agents.column(c, width=w)
+        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree_agents.yview)
+        self.tree_agents.configure(yscrollcommand=vsb.set)
+        self.tree_agents.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_agents.bind('<<TreeviewSelect>>', self.on_agent_select)
+
+        edit_frame = tk.LabelFrame(content_frame, text="Modifier les tolérances",
+                                   font=('Arial',11,'bold'), bg='white')
+        edit_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10,0))
+        info_frame = tk.Frame(edit_frame, bg='#ecf0f1', relief=tk.SUNKEN, bd=1)
+        info_frame.pack(fill=tk.X, padx=10, pady=10)
+        self.agent_info = tk.Label(info_frame, text="Aucun agent sélectionné",
+                                   font=('Arial',10,'bold'), bg='#ecf0f1', anchor='w')
+        self.agent_info.pack(padx=5, pady=5, fill=tk.X)
+
+        form_f = tk.Frame(edit_frame, bg='white')
+        form_f.pack(padx=10, pady=10, fill=tk.X)
+        row = 0
+        tk.Label(form_f, text="Heure d'entrée théorique :", bg='white').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+        self.entree_h = tk.Spinbox(form_f, from_=0, to=23, width=3, format='%02.0f')
+        self.entree_h.grid(row=row, column=1, padx=2, pady=5)
+        tk.Label(form_f, text=":", bg='white').grid(row=row, column=2)
+        self.entree_m = tk.Spinbox(form_f, from_=0, to=59, width=3, format='%02.0f')
+        self.entree_m.grid(row=row, column=3, padx=2, pady=5)
+        tk.Label(form_f, text=":00", bg='white').grid(row=row, column=4)
+        row += 1
+        tk.Label(form_f, text="Heure de sortie théorique :", bg='white').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+        self.sortie_h = tk.Spinbox(form_f, from_=0, to=23, width=3, format='%02.0f')
+        self.sortie_h.grid(row=row, column=1, padx=2, pady=5)
+        tk.Label(form_f, text=":", bg='white').grid(row=row, column=2)
+        self.sortie_m = tk.Spinbox(form_f, from_=0, to=59, width=3, format='%02.0f')
+        self.sortie_m.grid(row=row, column=3, padx=2, pady=5)
+        tk.Label(form_f, text=":00", bg='white').grid(row=row, column=4)
+        row += 1
+        tk.Label(form_f, text="Tolérance entrée (min) :", bg='white').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+        self.tol_entree_var = tk.IntVar()
+        self.tol_entree_spin = tk.Spinbox(form_f, from_=0, to=120, textvariable=self.tol_entree_var, width=8)
+        self.tol_entree_spin.grid(row=row, column=1, padx=5, pady=5, sticky='w')
+        row += 1
+        tk.Label(form_f, text="Tolérance sortie (min) :", bg='white').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+        self.tol_sortie_var = tk.IntVar()
+        self.tol_sortie_spin = tk.Spinbox(form_f, from_=0, to=120, textvariable=self.tol_sortie_var, width=8)
+        self.tol_sortie_spin.grid(row=row, column=1, padx=5, pady=5, sticky='w')
+        row += 1
+        tk.Label(form_f, text="Type de quart :", bg='white').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+        self.quart_var = tk.StringVar()
+        self.quart_combo = ttk.Combobox(form_f, textvariable=self.quart_var,
+                                         values=['jour','nuit','personnalisé'], width=15)
+        self.quart_combo.grid(row=row, column=1, padx=5, pady=5, sticky='w')
+        row += 1
+        self.concerne_var = tk.BooleanVar()
+        tk.Checkbutton(form_f, text="Agent concerné par le pointage",
+                       variable=self.concerne_var, bg='white').grid(row=row, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+
+        btn_frame = tk.Frame(edit_frame, bg='white')
+        btn_frame.pack(pady=15)
+        tk.Button(btn_frame, text="💾 Mettre à jour", command=self.mettre_a_jour_agent,
+                  bg='#27ae60', fg='white', font=('Arial',10,'bold'),
+                  width=20, height=1).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="↩ Réinitialiser", command=self.reset_formulaire,
+                  bg='#f39c12', fg='white', width=15).pack(side=tk.LEFT, padx=5)
+        # --- NOUVEAU BOUTON POUR APPLIQUER CONCERNE À TOUS ---
+        tk.Button(edit_frame, text="👥 Appliquer 'concerné' à tous les agents",
+                  command=self.appliquer_concerne_a_tous,
+                  bg='#3498db', fg='white', font=('Arial',9,'bold'),
+                  width=30, height=1).pack(pady=10)
+    
+    def appliquer_concerne_a_tous(self):
+        if messagebox.askyesno("Confirmation", "Appliquer la valeur 'Concerné par le pointage' à TOUS les agents ?\n\nCocher = tous concernés\nDécocher = tous non concernés"):
+            # Demander quelle valeur appliquer
+            reponse = messagebox.askquestion("Valeur à appliquer", 
+                                         "Cliquez OUI pour que TOUS les agents soient concernés par le pointage.\n"
+                                         "Cliquez NON pour qu'aucun ne soit concerné.\n\n"
+                                         "Annuler pour ne rien faire.")
+            if reponse == 'yes':
+                valeur = 1
+            elif reponse == 'no':
+                valeur = 0
+            else:
+                return
+            try:
+                with self.app.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE personnel SET concerne_pointage = ?", (valeur,))
+                    conn.commit()
+                messagebox.showinfo("Succès", f"{cursor.rowcount} agents mis à jour.\n'concerné_pointage' = {valeur}")
+                # Rafraîchir l'affichage si nécessaire
+                if hasattr(self, 'tree_agents'):
+                    self.charger_liste_agents()
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur : {e}")
+
+        self.charger_liste_agents()
+
+    def charger_liste_agents(self):
+        for i in self.tree_agents.get_children():
+            self.tree_agents.delete(i)
+        search = self.search_var.get().strip()
+        if search:
+            agents = self.app.db.search_personnel(search)
+        else:
+            agents = self.app.db.get_personnel()
+        for a in agents:
+            entree = a['heure_entree_theorique'][:5] if a['heure_entree_theorique'] else '08:00'
+            sortie = a['heure_sortie_theorique'][:5] if a['heure_sortie_theorique'] else '17:00'
+            self.tree_agents.insert('','end', values=(
+                a['id'],
+                a['matricule'],
+                a['nom'],
+                a['prenom'],
+                entree,
+                sortie,
+                a['tolerance_entree'],
+                a['tolerance_sortie'],
+                a.get('type_quart', 'jour')
+            ))
+
+    def reset_recherche(self):
+        self.search_var.set('')
+        self.charger_liste_agents()
+
+    def on_agent_select(self, event):
+        sel = self.tree_agents.selection()
+        if not sel:
+            return
+        vals = self.tree_agents.item(sel[0])['values']
+        self.current_agent_id = vals[0]
+        agent = self.app.db.get_personnel(self.current_agent_id)
+        if not agent:
+            return
+        self.agent_info.config(text=f"Agent sélectionné : {agent['prenom']} {agent['nom']} (Matricule: {agent['matricule']})")
+        entree = agent['heure_entree_theorique'] or '08:00:00'
+        sortie = agent['heure_sortie_theorique'] or '17:00:00'
+        self.entree_h.delete(0, tk.END); self.entree_h.insert(0, entree[:2])
+        self.entree_m.delete(0, tk.END); self.entree_m.insert(0, entree[3:5])
+        self.sortie_h.delete(0, tk.END); self.sortie_h.insert(0, sortie[:2])
+        self.sortie_m.delete(0, tk.END); self.sortie_m.insert(0, sortie[3:5])
+        self.tol_entree_var.set(agent['tolerance_entree'] or 10)
+        self.tol_sortie_var.set(agent['tolerance_sortie'] or 10)
+        self.quart_var.set(agent.get('type_quart', 'jour'))
+        self.concerne_var.set(bool(agent.get('concerne_pointage', 1)))
+
+    def mettre_a_jour_agent(self):
+        if not self.current_agent_id:
+            messagebox.showwarning("Attention", "Veuillez sélectionner un agent")
+            return
+        try:
+            heure_entree = f"{int(self.entree_h.get()):02d}:{int(self.entree_m.get()):02d}:00"
+            heure_sortie = f"{int(self.sortie_h.get()):02d}:{int(self.sortie_m.get()):02d}:00"
+            tol_entree = self.tol_entree_var.get()
+            tol_sortie = self.tol_sortie_var.get()
+            type_quart = self.quart_var.get()
+            concerne = 1 if self.concerne_var.get() else 0
+            agent = self.app.db.get_personnel(self.current_agent_id)
+            if not agent:
+                return
+            data = (
+                agent['matricule'],
+                agent.get('badge_id'),
+                agent['nom'],
+                agent['prenom'],
+                agent.get('type_person', 'cadre'),
+                agent.get('fonction'),
+                agent.get('activite_id'),
+                agent.get('division_id'),
+                agent.get('direction_id'),
+                agent.get('departement_id'),
+                agent.get('service_id'),
+                agent.get('equipe_id'),
+                agent.get('date_embauche'),
+                agent.get('date_naissance'),
+                agent.get('adresse'),
+                agent.get('telephone'),
+                agent.get('email'),
+                agent.get('photo'),
+                agent.get('statut', 'actif'),
+                concerne,
+                type_quart,
+                heure_entree,
+                heure_sortie,
+                tol_entree,
+                tol_sortie
+            )
+            self.app.db.update_personnel(self.current_agent_id, data)
+            messagebox.showinfo("Succès", "Tolérances mises à jour")
+            self.charger_liste_agents()
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
+
+    def reset_formulaire(self):
+        if self.current_agent_id:
+            agent = self.app.db.get_personnel(self.current_agent_id)
+            if agent:
+                entree = agent['heure_entree_theorique'] or '08:00:00'
+                sortie = agent['heure_sortie_theorique'] or '17:00:00'
+                self.entree_h.delete(0, tk.END); self.entree_h.insert(0, entree[:2])
+                self.entree_m.delete(0, tk.END); self.entree_m.insert(0, entree[3:5])
+                self.sortie_h.delete(0, tk.END); self.sortie_h.insert(0, sortie[:2])
+                self.sortie_m.delete(0, tk.END); self.sortie_m.insert(0, sortie[3:5])
+                self.tol_entree_var.set(agent['tolerance_entree'] or 10)
+                self.tol_sortie_var.set(agent['tolerance_sortie'] or 10)
+                self.quart_var.set(agent.get('type_quart', 'jour'))
+                self.concerne_var.set(bool(agent.get('concerne_pointage', 1)))
+
+    def create_tab_analyse(self):
+        main = tk.Frame(self.tab_analyse, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        filter_frame = tk.Frame(main, bg='white')
+        filter_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(filter_frame, text="Période du :", bg='white').grid(row=0, column=0, padx=5, pady=5)
+        self.analyse_date_debut = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.analyse_date_debut.grid(row=0, column=1, padx=5, pady=5)
+        self.analyse_date_debut.set_date(date.today().replace(day=1))
+        tk.Label(filter_frame, text="au :", bg='white').grid(row=0, column=2, padx=5, pady=5)
+        self.analyse_date_fin = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.analyse_date_fin.grid(row=0, column=3, padx=5, pady=5)
+        self.analyse_date_fin.set_date(date.today())
+        tk.Label(filter_frame, text="Direction :", bg='white').grid(row=0, column=4, padx=5, pady=5)
+        self.analyse_direction = ttk.Combobox(filter_frame, width=20)
+        self.analyse_direction.grid(row=0, column=5, padx=5, pady=5)
+        self.charger_directions_analyse()
+        tk.Button(filter_frame, text="📊 Analyser", command=self.analyser_retards,
+                  bg='#3498db', fg='white').grid(row=0, column=6, padx=10, pady=5)
+
+        result_frame = tk.Frame(main, bg='white')
+        result_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('Matricule', 'Agent', 'Nb retards', 'Total minutes', 'Justifiés', 'Non justifiés', 'Pénalité (€)')
+        self.tree_analyse = ttk.Treeview(result_frame, columns=cols, show='headings', height=12)
+        for c in cols:
+            self.tree_analyse.heading(c, text=c)
+            self.tree_analyse.column(c, width=120)
+        vsb = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=self.tree_analyse.yview)
+        self.tree_analyse.configure(yscrollcommand=vsb.set)
+        self.tree_analyse.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_export = tk.Frame(main, bg='white')
+        btn_export.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btn_export, text="📤 Exporter CSV", command=self.exporter_analyse,
+                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
+
+    def charger_directions_analyse(self):
+        try:
+            dirs = self.app.db.get_all_directions()
+            self.analyse_direction['values'] = ['Toutes'] + [d['nom'] for d in dirs]
+            self.analyse_direction.set('Toutes')
+        except:
+            pass
+
+    def analyser_retards(self):
+        for i in self.tree_analyse.get_children():
+            self.tree_analyse.delete(i)
+        date_debut = self.analyse_date_debut.get_date().strftime('%Y-%m-%d')
+        date_fin = self.analyse_date_fin.get_date().strftime('%Y-%m-%d')
+        direction = None if self.analyse_direction.get() == 'Toutes' else self.analyse_direction.get()
+        try:
+            with self.app.db.get_connection() as conn:
+                cursor = conn.cursor()
+                query = '''
+                    SELECT r.matricule, p.nom, p.prenom,
+                           COUNT(r.id) as nb_retards,
+                           SUM(r.minutes_retard) as total_min,
+                           SUM(CASE WHEN r.est_justifie=1 THEN r.minutes_retard ELSE 0 END) as justifie,
+                           SUM(CASE WHEN r.est_justifie=0 THEN r.minutes_retard ELSE 0 END) as non_justifie
+                    FROM retards_cumules r
+                    JOIN personnel p ON r.personnel_id = p.id
+                    LEFT JOIN directions dir ON p.direction_id = dir.id
+                    WHERE r.date_retard BETWEEN ? AND ?
+                '''
+                params = [date_debut, date_fin]
+                if direction:
+                    query += ' AND dir.nom_direction = ?'
+                    params.append(direction)
+                query += ' GROUP BY r.personnel_id ORDER BY total_min DESC'
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                penalite_par_min = float(self.app.db.get_parametre('penalite_retard', '0.50'))
+                for r in rows:
+                    penalite = r['non_justifie'] * penalite_par_min
+                    self.tree_analyse.insert('', 'end', values=(
+                        r['matricule'],
+                        f"{r['prenom']} {r['nom']}",
+                        r['nb_retards'],
+                        f"{r['total_min']} min",
+                        f"{r['justifie']} min",
+                        f"{r['non_justifie']} min",
+                        f"{penalite:.2f}"
+                    ))
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
+
+    def exporter_analyse(self):
+        data = []
+        for i in self.tree_analyse.get_children():
+            data.append(self.tree_analyse.item(i)['values'])
+        if not data:
+            messagebox.showwarning("Attention", "Aucune donnée à exporter")
+            return
+        fn = filedialog.asksaveasfilename(defaultextension=".csv",
+                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
+        if fn:
+            try:
+                df = pd.DataFrame(data, columns=['Matricule','Agent','Nb retards','Total minutes','Justifiés','Non justifiés','Pénalité (€)'])
+                if fn.endswith('.csv'):
+                    df.to_csv(fn, index=False, encoding='utf-8-sig')
+                else:
+                    df.to_excel(fn, index=False)
+                messagebox.showinfo("Succès", "Export terminé")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur export: {e}")
+
+
+# ============================================================
 # CONFIG WEEKEND DIALOG
 # ============================================================
 class ConfigWeekendDialog:
@@ -4377,7 +4038,6 @@ class ConfigWeekendDialog:
                  font=('Arial', 11, 'bold')).pack(pady=10)
 
         jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
-        # indices: lundi=0, mardi=1, mercredi=2, jeudi=3, vendredi=4, samedi=5, dimanche=6
         self.vars = []
         frame = tk.Frame(self.dialog)
         frame.pack(pady=10)
@@ -4387,7 +4047,6 @@ class ConfigWeekendDialog:
             cb = tk.Checkbutton(frame, text=jour, variable=var)
             cb.grid(row=i//3, column=i%3, sticky='w', padx=10, pady=5)
 
-        # Charger la configuration actuelle
         actuel = self.app.db.get_parametre('jours_weekend', '5,6')
         indices = [int(x.strip()) for x in actuel.split(',') if x.strip()]
         for i in indices:
@@ -4403,7 +4062,7 @@ class ConfigWeekendDialog:
 
     def sauvegarder(self):
         indices = [str(i) for i, var in enumerate(self.vars) if var.get()]
-        nouvelle_valeur = ','.join(indices)
+        nouvelle_valeur = ','.join(indices) if indices else ''
         self.app.db.set_parametre('jours_weekend', nouvelle_valeur)
         messagebox.showinfo("Succès", "Configuration des jours de weekend enregistrée.")
         self.dialog.destroy()
@@ -4616,37 +4275,42 @@ class ExportDialog:
     def charger_directions(self):
         try:
             dirs = self.app.db.get_all_directions()
-            self.direction_combo['values'] = ['Toutes'] + [d['nom'] for d in dirs]
+            if hasattr(self, 'direction_combo'):
+                self.direction_combo['values'] = ['Toutes'] + [d['nom'] for d in dirs]
         except:
-            self.direction_combo['values'] = ['Toutes']
+            pass
 
     def charger_agents(self):
         try:
             agents = self.app.db.get_personnel()
-            self.agent_combo['values'] = ['Tous'] + [f"{a['prenom']} {a['nom']} ({a['matricule']})" for a in agents if a.get('statut')=='actif']
+            if hasattr(self, 'agent_combo'):
+                self.agent_combo['values'] = ['Tous'] + [f"{a['prenom']} {a['nom']} ({a['matricule']})" for a in agents if a.get('statut')=='actif']
         except:
-            self.agent_combo['values'] = ['Tous']
+            pass
 
     def charger_departements(self):
         try:
             depts = self.app.db.get_all_departements()
-            self.departement_combo['values'] = ['Tous'] + [d['nom'] for d in depts]
+            if hasattr(self, 'departement_combo'):
+                self.departement_combo['values'] = ['Tous'] + [d['nom'] for d in depts]
         except:
-            self.departement_combo['values'] = ['Tous']
+            pass
 
     def charger_services(self):
         try:
             servs = self.app.db.get_all_services()
-            self.service_combo['values'] = ['Tous'] + [s['nom'] for s in servs]
+            if hasattr(self, 'service_combo'):
+                self.service_combo['values'] = ['Tous'] + [s['nom'] for s in servs]
         except:
-            self.service_combo['values'] = ['Tous']
+            pass
 
     def charger_equipes(self):
         try:
             eqs = self.app.db.get_all_equipes()
-            self.equipe_combo['values'] = ['Toutes'] + [e['nom'] for e in eqs]
+            if hasattr(self, 'equipe_combo'):
+                self.equipe_combo['values'] = ['Toutes'] + [e['nom'] for e in eqs]
         except:
-            self.equipe_combo['values'] = ['Toutes']
+            pass
 
     def exporter(self):
         typ = self.type_var.get()
@@ -4709,11 +4373,15 @@ class ExportDialog:
     def get_retards_data(self):
         date_debut = self.date_debut.get_date().strftime('%Y-%m-%d')
         date_fin = self.date_fin.get_date().strftime('%Y-%m-%d')
-        direction = None if self.direction_combo.get() == 'Toutes' else self.direction_combo.get()
-        agent_sel = self.agent_combo.get() if hasattr(self, 'agent_combo') else 'Tous'
+        direction = None
+        if hasattr(self, 'direction_combo') and self.direction_combo.get() != 'Toutes':
+            direction = self.direction_combo.get()
+        agent_sel = None
+        if hasattr(self, 'agent_combo'):
+            agent_sel = self.agent_combo.get()
         import re
         matricule = None
-        if agent_sel != 'Tous':
+        if agent_sel and agent_sel != 'Tous':
             match = re.search(r'\(([^)]+)\)', agent_sel)
             if match:
                 matricule = match.group(1)
@@ -4721,7 +4389,7 @@ class ExportDialog:
             c = conn.cursor()
             query = '''
                 SELECT r.id, r.matricule, p.nom, p.prenom, r.date_retard, r.minutes_retard,
-                       r.est_justifie, r.justification, r.mois, r.annee,
+                       r.est_justifie, r.justification,
                        dir.nom_direction as direction
                 FROM retards_cumules r
                 JOIN personnel p ON r.personnel_id = p.id
@@ -4745,10 +4413,18 @@ class ExportDialog:
     def get_absences_data(self):
         date_debut = self.date_debut.get_date()
         date_fin = self.date_fin.get_date()
-        direction = None if self.direction_combo.get() == 'Toutes' else self.direction_combo.get()
-        departement = None if self.departement_combo.get() == 'Tous' else self.departement_combo.get()
-        service = None if self.service_combo.get() == 'Tous' else self.service_combo.get()
-        equipe = None if self.equipe_combo.get() == 'Toutes' else self.equipe_combo.get()
+        direction = None
+        if hasattr(self, 'direction_combo') and self.direction_combo.get() != 'Toutes':
+            direction = self.direction_combo.get()
+        departement = None
+        if hasattr(self, 'departement_combo') and self.departement_combo.get() != 'Tous':
+            departement = self.departement_combo.get()
+        service = None
+        if hasattr(self, 'service_combo') and self.service_combo.get() != 'Tous':
+            service = self.service_combo.get()
+        equipe = None
+        if hasattr(self, 'equipe_combo') and self.equipe_combo.get() != 'Toutes':
+            equipe = self.equipe_combo.get()
 
         query_agents = '''
             SELECT p.id, p.matricule, p.nom, p.prenom,
@@ -4823,7 +4499,9 @@ class ExportDialog:
     def get_presence_data(self):
         date_debut = self.date_debut.get_date().strftime('%Y-%m-%d')
         date_fin = self.date_fin.get_date().strftime('%Y-%m-%d')
-        direction = None if self.direction_combo.get() == 'Toutes' else self.direction_combo.get()
+        direction = None
+        if hasattr(self, 'direction_combo') and self.direction_combo.get() != 'Toutes':
+            direction = self.direction_combo.get()
         rapport = self.app.db.get_presence_report(date_debut, date_fin, direction_nom=direction)
         if not rapport:
             return None
@@ -4831,35 +4509,1030 @@ class ExportDialog:
         return df
 
     def export_pdf(self, df, filename):
-        from pdf_reports import write_report
-        from jinja2 import Template
-        template_html = '''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>Export des données</title>
-            <style>
-                body { font-family: Arial, sans-serif; }
-                h1 { color: #2c3e50; }
-                table { border-collapse: collapse; width: 100%; }
-                th { background-color: #3498db; color: white; padding: 8px; }
-                td { border: 1px solid #ddd; padding: 8px; }
-                tr:nth-child(even) { background-color: #f2f2f2; }
-            </style>
-        </head>
-        <body>
-            <h1>Export des données - {{ type }}</h1>
-            <p>Généré le {{ date }}</p>
-            {{ table|safe }}
-        </body>
-        </html>
-        '''
-        template = Template(template_html)
-        html = template.render(type=self.type_var.get(),
-                               date=datetime.now().strftime('%d/%m/%Y %H:%M'),
-                               table=df.to_html(index=False))
-        write_report(html, filename)
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        if len(df.columns) > 6:
+            pagesize = landscape(A4)
+        else:
+            pagesize = A4
+        doc = SimpleDocTemplate(filename, pagesize=pagesize,
+                                rightMargin=2*cm, leftMargin=2*cm,
+                                topMargin=2*cm, bottomMargin=2*cm)
+        elements = []
+        styles = getSampleStyleSheet()
+        title_style = styles['Title']
+        elements.append(Paragraph(f"Export des données - {self.type_var.get()}", title_style))
+        elements.append(Spacer(1, 0.5*cm))
+        data = [df.columns.tolist()] + df.values.tolist()
+        table = Table(data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        
+# ============================================================
+# GESTION POINTAGES
+# ============================================================
+class GestionPointages:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.window = None
+        self.filtres = {}
+
+    def ouvrir(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Gestion des pointages")
+        self.window.geometry("1200x700")
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.configure(bg='#f0f0f0')
+        self.create_widgets()
+        self.charger_pointages()
+
+    def create_widgets(self):
+        tk.Label(self.window, text="📋 GESTION DES POINTAGES",
+                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
+        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Pointage rapide
+        quick = tk.LabelFrame(main, text="⏱️ Pointage rapide", font=('Arial',12,'bold'), bg='white')
+        quick.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(quick, text="Matricule / Badge:", bg='white').grid(row=0, column=0, padx=5, pady=5)
+        self.entry_id = tk.Entry(quick, width=20)
+        self.entry_id.grid(row=0, column=1, padx=5, pady=5)
+        self.entry_id.focus_set()
+        tk.Label(quick, text="Type:", bg='white').grid(row=0, column=2, padx=5, pady=5)
+        self.type_var = tk.StringVar(value='entrée')
+        ttk.Combobox(quick, textvariable=self.type_var,
+                    values=['entrée','sortie','pause_début','pause_fin'], width=12).grid(row=0, column=3, padx=5, pady=5)
+        tk.Label(quick, text="Justification:", bg='white').grid(row=0, column=4, padx=5, pady=5)
+        self.entry_just = tk.Entry(quick, width=30)
+        self.entry_just.grid(row=0, column=5, padx=5, pady=5)
+        tk.Button(quick, text="✅ Pointer", command=self.pointer,
+                  bg='#27ae60', fg='white', font=('Arial',10,'bold')).grid(row=0, column=6, padx=10, pady=5)
+
+        # Filtres
+        filt = tk.LabelFrame(main, text="🔍 Filtres", font=('Arial',12,'bold'), bg='white')
+        filt.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(filt, text="Du:", bg='white').grid(row=0, column=0, padx=5, pady=5)
+        self.date_debut = DateEntry(filt, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
+        self.date_debut.grid(row=0, column=1, padx=5, pady=5)
+        self.date_debut.set_date(datetime.now().replace(day=1))
+        tk.Label(filt, text="Au:", bg='white').grid(row=0, column=2, padx=5, pady=5)
+        self.date_fin = DateEntry(filt, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
+        self.date_fin.grid(row=0, column=3, padx=5, pady=5)
+        self.date_fin.set_date(datetime.now())
+        tk.Label(filt, text="Matricule:", bg='white').grid(row=0, column=4, padx=5, pady=5)
+        self.filtre_mat = tk.Entry(filt, width=15)
+        self.filtre_mat.grid(row=0, column=5, padx=5, pady=5)
+        tk.Label(filt, text="Direction:", bg='white').grid(row=1, column=0, padx=5, pady=5)
+        self.filtre_dir = ttk.Combobox(filt, width=20)
+        self.filtre_dir.grid(row=1, column=1, padx=5, pady=5)
+        self.charger_directions()
+        tk.Label(filt, text="Type:", bg='white').grid(row=1, column=2, padx=5, pady=5)
+        self.filtre_type = ttk.Combobox(filt, values=['','entrée','sortie','pause_début','pause_fin'], width=12)
+        self.filtre_type.grid(row=1, column=3, padx=5, pady=5)
+        self.filtre_type.set('')
+        tk.Button(filt, text="🔍 Rechercher", command=self.appliquer_filtres,
+                  bg='#3498db', fg='white').grid(row=1, column=4, columnspan=2, padx=10, pady=5)
+
+        # Tableau des résultats
+        tab = tk.Frame(main, bg='white')
+        tab.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('ID','Date','Heure','Matricule','Nom','Type','Quart','Retard','Justification','Mode')
+        self.tree = ttk.Treeview(tab, columns=cols, show='headings', height=15)
+        wids = [50,100,80,100,150,100,100,80,200,100]
+        for c,w in zip(cols,wids):
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=w)
+        vsb = ttk.Scrollbar(tab, orient=tk.VERTICAL, command=self.tree.yview)
+        hsb = ttk.Scrollbar(tab, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_columnconfigure(0, weight=1)
+
+        btnf = tk.Frame(main, bg='white')
+        btnf.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btnf, text="📤 Exporter CSV", command=self.exporter_csv,
+                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
+
+    def charger_directions(self):
+        try:
+            dirs = self.app.db.get_all_directions()
+            self.filtre_dir['values'] = [''] + [d['nom'] for d in dirs]
+        except:
+            pass
+
+    def appliquer_filtres(self):
+        self.filtres = {
+            'date_debut': self.date_debut.get_date().strftime('%Y-%m-%d'),
+            'date_fin': self.date_fin.get_date().strftime('%Y-%m-%d'),
+            'matricule': self.filtre_mat.get().strip() or None,
+            'type_pointage': self.filtre_type.get().strip() or None,
+            'direction_nom': self.filtre_dir.get().strip() or None
+        }
+        self.charger_pointages()
+
+    def charger_pointages(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        try:
+            pts = self.app.db.get_pointages_filtres(**self.filtres)
+            for p in pts:
+                retard = f"{p.get('minutes_retard', 0)} min" if p.get('minutes_retard', 0) else '-'
+                heure = p['heure_pointage'][:5] if p.get('heure_pointage') else ''
+                self.tree.insert('','end', values=(
+                    p['id'], p['date_pointage'], heure,
+                    p['matricule'], f"{p.get('prenom', '')} {p.get('nom', '')}",
+                    p['type_pointage'], p.get('quart_nom', ''),
+                    retard, p.get('justification', '') or '', p.get('mode', '')
+                ))
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de charger les pointages : {e}")
+
+    def pointer(self):
+        ident = self.entry_id.get().strip()
+        typ = self.type_var.get()
+        just = self.entry_just.get().strip()
+        if not ident:
+            messagebox.showwarning("Attention", "Saisissez un matricule ou badge")
+            return
+        pid, msg = self.app.db.add_pointage_avance(
+            matricule=ident, badge_id=ident,
+            type_pointage=typ, justification=just,
+            user_id=self.app.current_user['id']
+        )
+        if pid:
+            messagebox.showinfo("Succès", msg)
+            self.entry_id.delete(0, tk.END)
+            self.entry_just.delete(0, tk.END)
+            self.charger_pointages()
+        else:
+            messagebox.showerror("Erreur", msg)
+
+    def exporter_csv(self):
+        data = []
+        for i in self.tree.get_children():
+            data.append(self.tree.item(i)['values'])
+        if not data:
+            messagebox.showwarning("Attention", "Aucune donnée")
+            return
+        fn = filedialog.asksaveasfilename(defaultextension=".csv",
+                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
+        if fn:
+            try:
+                df = pd.DataFrame(data, columns=['ID','Date','Heure','Matricule','Nom','Type','Quart','Retard','Justif','Mode'])
+                if fn.endswith('.csv'):
+                    df.to_csv(fn, index=False, encoding='utf-8-sig')
+                else:
+                    df.to_excel(fn, index=False)
+                messagebox.showinfo("Succès", "Export terminé")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur export: {e}")
+
+
+# ============================================================
+# GESTION HEURES SUPPLÉMENTAIRES
+# ============================================================
+class GestionHeuresSup:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.window = None
+
+    def ouvrir(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Heures supplémentaires")
+        self.window.geometry("1100x650")
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.configure(bg='#f0f0f0')
+        self.create_widgets()
+        self.charger_liste()
+
+    def create_widgets(self):
+        tk.Label(self.window, text="💰 HEURES SUPPLÉMENTAIRES",
+                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
+        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        add = tk.LabelFrame(main, text="➕ Nouvelle heure sup", font=('Arial',11,'bold'), bg='white')
+        add.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(add, text="Matricule:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.entry_mat = tk.Entry(add, width=15)
+        self.entry_mat.grid(row=0, column=1, padx=5, pady=5)
+        tk.Label(add, text="Début (AAAA-MM-JJ HH:MM):", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+        self.entry_deb = tk.Entry(add, width=20)
+        self.entry_deb.grid(row=0, column=3, padx=5, pady=5)
+        self.entry_deb.insert(0, datetime.now().strftime('%Y-%m-%d %H:%M'))
+        tk.Label(add, text="Fin (AAAA-MM-JJ HH:MM):", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
+        self.entry_fin = tk.Entry(add, width=20)
+        self.entry_fin.grid(row=1, column=3, padx=5, pady=5)
+        self.entry_fin.insert(0, (datetime.now()+timedelta(hours=2)).strftime('%Y-%m-%d %H:%M'))
+        tk.Label(add, text="Type:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        self.type_sup = ttk.Combobox(add, values=['normale','nuit','weekend','jour_ferie'], width=15)
+        self.type_sup.set('normale')
+        self.type_sup.grid(row=1, column=1, padx=5, pady=5)
+        tk.Label(add, text="Motif:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        self.entry_motif = tk.Entry(add, width=50)
+        self.entry_motif.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky='w')
+        tk.Button(add, text="✅ Ajouter", command=self.ajouter,
+                  bg='#27ae60', fg='white').grid(row=2, column=4, padx=10, pady=5)
+
+        lst = tk.Frame(main, bg='white')
+        lst.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('ID','Matricule','Nom','Début','Fin','Durée','Type','Statut','Motif')
+        self.tree = ttk.Treeview(lst, columns=cols, show='headings', height=15)
+        wids = [50,100,150,150,150,80,100,100,200]
+        for c,w in zip(cols,wids):
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=w)
+        vsb = ttk.Scrollbar(lst, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btnf = tk.Frame(main, bg='white')
+        btnf.pack(fill=tk.X, padx=10, pady=10)
+        if self.app.current_user['role'] in ['admin','superviseur']:
+            tk.Button(btnf, text="✅ Approuver", command=self.approuver,
+                      bg='#3498db', fg='white').pack(side=tk.LEFT, padx=5)
+            tk.Button(btnf, text="❌ Refuser", command=self.refuser,
+                      bg='#e74c3c', fg='white').pack(side=tk.LEFT, padx=5)
+        tk.Button(btnf, text="📤 Exporter", command=self.exporter,
+                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
+
+    def ajouter(self):
+        mat = self.entry_mat.get().strip()
+        deb = self.entry_deb.get().strip()
+        fin = self.entry_fin.get().strip()
+        typ = self.type_sup.get()
+        motif = self.entry_motif.get().strip()
+        if not mat or not deb or not fin:
+            messagebox.showwarning("Attention", "Matricule, début et fin obligatoires")
+            return
+        pers = self.app.db.get_personnel_by_matricule(mat)
+        if not pers:
+            messagebox.showerror("Erreur", "Matricule inconnu")
+            return
+        try:
+            dt_deb = datetime.strptime(deb, '%Y-%m-%d %H:%M')
+            dt_fin = datetime.strptime(fin, '%Y-%m-%d %H:%M')
+            duree = (dt_fin - dt_deb).total_seconds() / 3600
+            if duree <= 0:
+                messagebox.showerror("Erreur", "La date de fin doit être postérieure")
+                return
+        except:
+            messagebox.showerror("Erreur", "Format de date incorrect (AAAA-MM-JJ HH:MM)")
+            return
+        taux = {'normale':1.25, 'nuit':1.5, 'weekend':1.75, 'jour_ferie':2.0}.get(typ, 1.25)
+        hs_id = self.app.db.add_heure_supplementaire(
+            pers['id'], mat, deb, fin, duree, typ, taux, motif
+        )
+        if hs_id:
+            messagebox.showinfo("Succès", "Heure supplémentaire ajoutée")
+            self.entry_mat.delete(0, tk.END)
+            self.entry_motif.delete(0, tk.END)
+            self.charger_liste()
+
+    def charger_liste(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        hs_list = self.app.db.get_heures_supplementaires()
+        for h in hs_list:
+            self.tree.insert('','end', values=(
+                h['id'], h['matricule'], f"{h.get('prenom', '')} {h.get('nom', '')}",
+                h['date_heure_debut'], h['date_heure_fin'],
+                f"{h['duree_heures']:.1f}h", h['type_heure_sup'],
+                h['statut'], h['motif'] or ''
+            ))
+
+    def approuver(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Sélectionnez une heure sup")
+            return
+        hid = self.tree.item(sel[0])['values'][0]
+        self.app.db.update_heure_sup_statut(hid, 'approuve', self.app.current_user['username'])
+        self.charger_liste()
+
+    def refuser(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Sélectionnez une heure sup")
+            return
+        hid = self.tree.item(sel[0])['values'][0]
+        self.app.db.update_heure_sup_statut(hid, 'refuse', self.app.current_user['username'])
+        self.charger_liste()
+
+    def exporter(self):
+        data = []
+        for i in self.tree.get_children():
+            data.append(self.tree.item(i)['values'])
+        if not data:
+            messagebox.showwarning("Attention", "Aucune donnée")
+            return
+        fn = filedialog.asksaveasfilename(defaultextension=".csv",
+                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
+        if fn:
+            try:
+                df = pd.DataFrame(data, columns=['ID','Matricule','Nom','Début','Fin','Durée','Type','Statut','Motif'])
+                if fn.endswith('.csv'):
+                    df.to_csv(fn, index=False, encoding='utf-8-sig')
+                else:
+                    df.to_excel(fn, index=False)
+                messagebox.showinfo("Succès", "Export terminé")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur export: {e}")
+
+
+# ============================================================
+# GESTION JOURS FÉRIÉS
+# ============================================================
+class GestionJoursFeries:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.window = None
+
+    def ouvrir(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Jours fériés")
+        self.window.geometry("600x500")
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.configure(bg='#f0f0f0')
+        self.create_widgets()
+        self.charger_liste()
+
+    def create_widgets(self):
+        tk.Label(self.window, text="🎉 JOURS FÉRIÉS",
+                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
+        main = tk.Frame(self.window, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        add = tk.Frame(main, bg='white')
+        add.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(add, text="Date:", bg='white').grid(row=0, column=0, padx=5, pady=5)
+        self.date_entry = DateEntry(add, width=12, date_pattern='yyyy-mm-dd')
+        self.date_entry.grid(row=0, column=1, padx=5, pady=5)
+        tk.Label(add, text="Nom:", bg='white').grid(row=0, column=2, padx=5, pady=5)
+        self.nom_entry = tk.Entry(add, width=30)
+        self.nom_entry.grid(row=0, column=3, padx=5, pady=5)
+        tk.Button(add, text="➕ Ajouter", command=self.ajouter,
+                  bg='#27ae60', fg='white').grid(row=0, column=4, padx=10, pady=5)
+
+        lst = tk.Frame(main, bg='white')
+        lst.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('ID','Date','Nom','Année')
+        self.tree = ttk.Treeview(lst, columns=cols, show='headings', height=15)
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=120)
+        vsb = ttk.Scrollbar(lst, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btnf = tk.Frame(main, bg='white')
+        btnf.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btnf, text="🗑️ Supprimer", command=self.supprimer,
+                  bg='#e74c3c', fg='white').pack(side=tk.RIGHT, padx=5)
+
+    def ajouter(self):
+        date = self.date_entry.get_date().strftime('%Y-%m-%d')
+        nom = self.nom_entry.get().strip()
+        if not nom:
+            messagebox.showwarning("Attention", "Veuillez saisir un nom")
+            return
+        self.app.db.add_jour_ferie(date, nom)
+        messagebox.showinfo("Succès", "Jour férié ajouté")
+        self.nom_entry.delete(0, tk.END)
+        self.charger_liste()
+
+    def charger_liste(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        jours = self.app.db.get_all_jours_feries()
+        for j in jours:
+            self.tree.insert('','end', values=(j['id'], j['date_jour'], j['nom'], j['date_jour'][:4]))
+
+    def supprimer(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Sélectionnez un jour férié")
+            return
+        jid = self.tree.item(sel[0])['values'][0]
+        if messagebox.askyesno("Confirmation", "Supprimer ce jour férié ?"):
+            self.app.db.delete_jour_ferie(jid)
+            self.charger_liste()
+
+
+# ============================================================
+# GESTION CONGÉS (ABSENCES) - VERSION CORRIGÉE
+# ============================================================
+class GestionAbsences:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.window = None
+        self.filtres = {}
+
+    def ouvrir(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Gestion des congés")
+        self.window.geometry("1300x750")
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.configure(bg='#f0f0f0')
+        self.create_widgets()
+        self.charger_demandes()
+        self.actualiser_statistiques()
+
+    def create_widgets(self):
+        tk.Label(self.window, text="📅 GESTION DES CONGÉS",
+                font=('Arial',16,'bold'), bg='#f0f0f0', fg='#2c3e50').pack(pady=10)
+
+        notebook = ttk.Notebook(self.window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.tab_demande = ttk.Frame(notebook)
+        notebook.add(self.tab_demande, text="📝 Demande")
+        self.create_tab_demande()
+
+        self.tab_liste = ttk.Frame(notebook)
+        notebook.add(self.tab_liste, text="📋 Liste")
+        self.create_tab_liste()
+
+        if self.app.current_user['role'] in ['admin', 'superviseur']:
+            self.tab_approbation = ttk.Frame(notebook)
+            notebook.add(self.tab_approbation, text="✅ Approbation")
+            self.create_tab_approbation()
+
+        self.tab_stats = ttk.Frame(notebook)
+        notebook.add(self.tab_stats, text="📊 Statistiques")
+        self.create_tab_stats()
+
+    def create_tab_demande(self):
+        main = tk.Frame(self.tab_demande, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        frame_agent = tk.LabelFrame(main, text="Agent concerné", font=('Arial',11,'bold'), bg='white')
+        frame_agent.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(frame_agent, text="Matricule :", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.demande_matricule = ttk.Combobox(frame_agent, width=15)
+        self.demande_matricule.grid(row=0, column=1, padx=5, pady=5)
+        self.charger_liste_matricules()
+        tk.Label(frame_agent, text="Nom complet :", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+        self.demande_nom = tk.Entry(frame_agent, width=30, state='readonly')
+        self.demande_nom.grid(row=0, column=3, padx=5, pady=5)
+        self.demande_matricule.bind('<<ComboboxSelected>>', self.on_agent_selected)
+
+        frame_type = tk.LabelFrame(main, text="Type de congé", font=('Arial',11,'bold'), bg='white')
+        frame_type.pack(fill=tk.X, padx=10, pady=10)
+        types_conge = ['Congé annuel', 'Congé maladie', 'Congé maternité', 'Congé paternité',
+                       'Congé sans solde', 'Congé exceptionnel', 'RTT', 'Formation', 'Événement familial']
+        self.type_conge_var = tk.StringVar(value='Congé annuel')
+        ttk.Combobox(frame_type, textvariable=self.type_conge_var, values=types_conge,
+                     width=30, state='readonly').pack(padx=10, pady=10, anchor='w')
+
+        frame_periode = tk.LabelFrame(main, text="Période", font=('Arial',11,'bold'), bg='white')
+        frame_periode.pack(fill=tk.X, padx=10, pady=10)
+        per_f = tk.Frame(frame_periode, bg='white')
+        per_f.pack(padx=10, pady=10)
+        tk.Label(per_f, text="Du :", bg='white').pack(side=tk.LEFT, padx=5)
+        self.demande_date_debut = DateEntry(per_f, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
+        self.demande_date_debut.pack(side=tk.LEFT, padx=5)
+        self.demande_date_debut.set_date(datetime.now())
+        tk.Label(per_f, text="au :", bg='white').pack(side=tk.LEFT, padx=5)
+        self.demande_date_fin = DateEntry(per_f, width=12, date_pattern='yyyy-mm-dd', background='#3498db')
+        self.demande_date_fin.pack(side=tk.LEFT, padx=5)
+        self.demande_date_fin.set_date(datetime.now() + timedelta(days=7))
+        tk.Label(per_f, text="Durée :", bg='white').pack(side=tk.LEFT, padx=(20,5))
+        self.demande_duree = tk.Label(per_f, text="7 jours", font=('Arial',11,'bold'), fg='#27ae60', bg='white')
+        self.demande_duree.pack(side=tk.LEFT, padx=5)
+        tk.Button(per_f, text="Calculer", command=self.calculer_duree,
+                  bg='#3498db', fg='white').pack(side=tk.LEFT, padx=10)
+
+        frame_solde = tk.LabelFrame(main, text="Solde de congés annuels", font=('Arial',11,'bold'), bg='white')
+        frame_solde.pack(fill=tk.X, padx=10, pady=10)
+        self.solde_label = tk.Label(frame_solde, text="---", font=('Arial',11), fg='#e67e22', bg='white')
+        self.solde_label.pack(padx=10, pady=10, anchor='w')
+
+        frame_motif = tk.LabelFrame(main, text="Motif / Remarques", font=('Arial',11,'bold'), bg='white')
+        frame_motif.pack(fill=tk.X, padx=10, pady=10)
+        self.demande_motif = tk.Text(frame_motif, height=4, width=70)
+        self.demande_motif.pack(padx=10, pady=10)
+
+        frame_justif = tk.LabelFrame(main, text="Justificatif (optionnel)", font=('Arial',11,'bold'), bg='white')
+        frame_justif.pack(fill=tk.X, padx=10, pady=10)
+        jf = tk.Frame(frame_justif, bg='white')
+        jf.pack(padx=10, pady=10, fill=tk.X)
+        self.justificatif_path = tk.StringVar()
+        tk.Entry(jf, textvariable=self.justificatif_path, width=50).pack(side=tk.LEFT, padx=5)
+        tk.Button(jf, text="📎 Parcourir", command=self.parcourir_justificatif,
+                  bg='#95a5a6', fg='white').pack(side=tk.LEFT, padx=5)
+
+        btn_frame = tk.Frame(main, bg='white')
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text="📨 SOUMETTRE LA DEMANDE", command=self.soumettre_demande,
+                  bg='#27ae60', fg='white', font=('Arial',12,'bold'),
+                  width=30, height=2).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="🗑️ EFFACER", command=self.effacer_formulaire,
+                  bg='#e74c3c', fg='white', font=('Arial',10),
+                  width=15, height=1).pack(side=tk.LEFT, padx=10)
+
+    def create_tab_liste(self):
+        main = tk.Frame(self.tab_liste, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        filt_frame = tk.Frame(main, bg='white')
+        filt_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(filt_frame, text="Période du :", bg='white').grid(row=0, column=0, padx=5, pady=5)
+        self.filtre_date_debut = DateEntry(filt_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.filtre_date_debut.grid(row=0, column=1, padx=5, pady=5)
+        self.filtre_date_debut.set_date(date.today().replace(day=1))
+        tk.Label(filt_frame, text="au :", bg='white').grid(row=0, column=2, padx=5, pady=5)
+        self.filtre_date_fin = DateEntry(filt_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.filtre_date_fin.grid(row=0, column=3, padx=5, pady=5)
+        self.filtre_date_fin.set_date(date.today())
+        tk.Label(filt_frame, text="Statut :", bg='white').grid(row=0, column=4, padx=5, pady=5)
+        self.filtre_statut = ttk.Combobox(filt_frame, values=['Tous', 'en_attente', 'approuve', 'refuse'], width=15)
+        self.filtre_statut.grid(row=0, column=5, padx=5, pady=5)
+        self.filtre_statut.set('Tous')
+        tk.Label(filt_frame, text="Matricule :", bg='white').grid(row=1, column=0, padx=5, pady=5)
+        self.filtre_matricule = tk.Entry(filt_frame, width=15)
+        self.filtre_matricule.grid(row=1, column=1, padx=5, pady=5)
+        tk.Label(filt_frame, text="Type :", bg='white').grid(row=1, column=2, padx=5, pady=5)
+        self.filtre_type = ttk.Combobox(filt_frame, values=['Tous', 'Congé annuel', 'Congé maladie',
+                                                             'Congé maternité', 'Congé paternité',
+                                                             'Congé sans solde', 'Congé exceptionnel',
+                                                             'RTT', 'Formation', 'Événement familial'], width=20)
+        self.filtre_type.grid(row=1, column=3, padx=5, pady=5)
+        self.filtre_type.set('Tous')
+        tk.Button(filt_frame, text="🔍 Filtrer", command=self.appliquer_filtres,
+                  bg='#3498db', fg='white').grid(row=1, column=4, padx=10, pady=5)
+        tk.Button(filt_frame, text="🔄 Réinitialiser", command=self.charger_demandes,
+                  bg='#95a5a6', fg='white').grid(row=1, column=5, padx=5, pady=5)
+
+        tree_frame = tk.Frame(main, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('ID', 'Matricule', 'Agent', 'Type', 'Début', 'Fin', 'Durée', 'Statut', 'Motif', 'Date demande')
+        self.tree_liste = ttk.Treeview(tree_frame, columns=cols, show='headings', height=15)
+        col_widths = [50, 100, 150, 150, 100, 100, 70, 100, 200, 120]
+        for c, w in zip(cols, col_widths):
+            self.tree_liste.heading(c, text=c)
+            self.tree_liste.column(c, width=w)
+        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree_liste.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.tree_liste.xview)
+        self.tree_liste.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.tree_liste.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        self.tree_liste.bind('<Double-Button-1>', self.afficher_details_demande)
+
+        btn_export = tk.Frame(main, bg='white')
+        btn_export.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btn_export, text="📤 Exporter CSV", command=self.exporter_liste,
+                  bg='#2ecc71', fg='white').pack(side=tk.RIGHT, padx=5)
+
+    def create_tab_approbation(self):
+        main = tk.Frame(self.tab_approbation, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        tk.Label(main, text="Demandes en attente d'approbation",
+                font=('Arial',12,'bold'), bg='white', fg='#2c3e50').pack(pady=10)
+        tree_frame = tk.Frame(main, bg='white')
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        cols = ('ID', 'Matricule', 'Agent', 'Type', 'Début', 'Fin', 'Durée', 'Motif', 'Date demande')
+        self.tree_attente = ttk.Treeview(tree_frame, columns=cols, show='headings', height=12)
+        col_widths = [50, 100, 150, 150, 100, 100, 70, 200, 120]
+        for c, w in zip(cols, col_widths):
+            self.tree_attente.heading(c, text=c)
+            self.tree_attente.column(c, width=w)
+        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree_attente.yview)
+        self.tree_attente.configure(yscrollcommand=vsb.set)
+        self.tree_attente.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        btn_frame = tk.Frame(main, bg='white')
+        btn_frame.pack(fill=tk.X, padx=10, pady=20)
+        tk.Button(btn_frame, text="✅ Approuver", command=self.approuver_demande,
+                  bg='#27ae60', fg='white', font=('Arial',11,'bold'),
+                  width=15, height=2).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="❌ Refuser", command=self.refuser_demande,
+                  bg='#e74c3c', fg='white', font=('Arial',11,'bold'),
+                  width=15, height=2).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="📄 Détails", command=self.voir_details_attente,
+                  bg='#3498db', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+        self.charger_demandes_attente()
+
+    def create_tab_stats(self):
+        main = tk.Frame(self.tab_stats, bg='white', relief=tk.RAISED, bd=2)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        cards_frame = tk.Frame(main, bg='white')
+        cards_frame.pack(pady=10)
+        self.stat_total = tk.StringVar(value='0')
+        self.stat_attente = tk.StringVar(value='0')
+        self.stat_approuve = tk.StringVar(value='0')
+        self.stat_refuse = tk.StringVar(value='0')
+        self.creer_carte(cards_frame, "📊 Total demandes", self.stat_total, "#3498db", 0)
+        self.creer_carte(cards_frame, "⏳ En attente", self.stat_attente, "#f39c12", 1)
+        self.creer_carte(cards_frame, "✅ Approuvées", self.stat_approuve, "#27ae60", 2)
+        self.creer_carte(cards_frame, "❌ Refusées", self.stat_refuse, "#e74c3c", 3)
+        graph_frame = tk.Frame(main, bg='white')
+        graph_frame.pack(fill=tk.BOTH, expand=True, pady=20)
+        self.figure = plt.Figure(figsize=(10,4), dpi=100)
+        self.figure.subplots_adjust(hspace=0.4)
+        self.ax1 = self.figure.add_subplot(121)
+        self.ax2 = self.figure.add_subplot(122)
+        self.canvas = FigureCanvasTkAgg(self.figure, graph_frame)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        tk.Button(main, text="🔄 Actualiser", command=self.actualiser_statistiques,
+                  bg='#3498db', fg='white').pack(pady=10)
+
+    def creer_carte(self, parent, titre, variable, couleur, col):
+        card = tk.Frame(parent, bg=couleur, relief=tk.RAISED, bd=2, width=180, height=90)
+        card.grid(row=0, column=col, padx=10, pady=10)
+        card.grid_propagate(False)
+        tk.Label(card, text=titre, font=('Arial',10), bg=couleur, fg='white').pack(pady=(10,0))
+        tk.Label(card, textvariable=variable, font=('Arial',20,'bold'), bg=couleur, fg='white').pack()
+
+    def charger_liste_matricules(self):
+        try:
+            pers = self.app.db.get_personnel()
+            matricules = [p['matricule'] for p in pers if p.get('statut') == 'actif']
+            self.demande_matricule['values'] = matricules
+        except Exception as e:
+            print(f"Erreur chargement matricules: {e}")
+
+    def on_agent_selected(self, event=None):
+        mat = self.demande_matricule.get()
+        if mat:
+            pers = self.app.db.get_personnel_by_matricule(mat)
+            if pers:
+                self.demande_nom.config(state='normal')
+                self.demande_nom.delete(0, tk.END)
+                self.demande_nom.insert(0, f"{pers['prenom']} {pers['nom']}")
+                self.demande_nom.config(state='readonly')
+                self.calculer_solde(mat)
+
+    def calculer_solde(self, matricule):
+        try:
+            quota = 25
+            annee = datetime.now().year
+            with self.app.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT SUM(duree_jours) as total
+                    FROM conges
+                    WHERE matricule = ? AND type_conge = 'Congé annuel'
+                    AND statut IN ('approuve', 'en_attente')
+                    AND strftime('%Y', date_debut) = ?
+                ''', (matricule, str(annee)))
+                row = cursor.fetchone()
+                pris = row[0] if row and row[0] else 0
+                reste = quota - pris
+                self.solde_label.config(text=f"{reste} jours restants sur {quota} jours (année {annee})")
+        except Exception as e:
+            self.solde_label.config(text="Erreur de calcul du solde")
+            print(f"Erreur solde: {e}")
+
+    def calculer_duree(self):
+        try:
+            debut = self.demande_date_debut.get_date()
+            fin = self.demande_date_fin.get_date()
+            duree = (fin - debut).days + 1
+            if duree > 0:
+                self.demande_duree.config(text=f"{duree} jours")
+            else:
+                self.demande_duree.config(text="0 jour")
+                messagebox.showwarning("Attention", "La date de fin doit être postérieure ou égale à la date de début")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur de calcul: {e}")
+
+    def parcourir_justificatif(self):
+        filename = filedialog.askopenfilename(
+            title="Sélectionner un justificatif",
+            filetypes=[("PDF files", "*.pdf"), ("Images", "*.jpg *.png"), ("Tous", "*.*")]
+        )
+        if filename:
+            self.justificatif_path.set(filename)
+
+    def soumettre_demande(self):
+        mat = self.demande_matricule.get().strip()
+        if not mat:
+            messagebox.showwarning("Validation", "Veuillez sélectionner un agent")
+            return
+        type_conge = self.type_conge_var.get()
+        if not type_conge:
+            messagebox.showwarning("Validation", "Veuillez sélectionner un type de congé")
+            return
+        debut = self.demande_date_debut.get_date()
+        fin = self.demande_date_fin.get_date()
+        if debut > fin:
+            messagebox.showwarning("Validation", "La date de fin doit être postérieure ou égale à la date de début")
+            return
+        duree = (fin - debut).days + 1
+        if duree <= 0:
+            messagebox.showwarning("Validation", "La durée doit être positive")
+            return
+        motif = self.demande_motif.get("1.0", tk.END).strip()
+        justif = self.justificatif_path.get().strip()
+        pers = self.app.db.get_personnel_by_matricule(mat)
+        if not pers:
+            messagebox.showerror("Erreur", "Matricule inconnu")
+            return
+        data = (
+            pers['id'],
+            mat,
+            type_conge,
+            debut.strftime('%Y-%m-%d'),
+            fin.strftime('%Y-%m-%d'),
+            duree,
+            motif,
+            justif,
+            'en_attente',
+            date.today().strftime('%Y-%m-%d')
+        )
+        try:
+            self.app.db.add_conge(data)
+            messagebox.showinfo("Succès", "Demande de congé soumise avec succès")
+            self.effacer_formulaire()
+            self.charger_demandes()
+            self.charger_demandes_attente()
+            self.actualiser_statistiques()
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors de l'enregistrement: {e}")
+
+    def effacer_formulaire(self):
+        self.demande_matricule.set('')
+        self.demande_nom.config(state='normal')
+        self.demande_nom.delete(0, tk.END)
+        self.demande_nom.config(state='readonly')
+        self.type_conge_var.set('Congé annuel')
+        self.demande_date_debut.set_date(datetime.now())
+        self.demande_date_fin.set_date(datetime.now() + timedelta(days=7))
+        self.demande_duree.config(text="7 jours")
+        self.demande_motif.delete("1.0", tk.END)
+        self.justificatif_path.set("")
+        self.solde_label.config(text="---")
+
+    def charger_demandes(self):
+        for i in self.tree_liste.get_children():
+            self.tree_liste.delete(i)
+        try:
+            demandes = self.app.db.get_conges(self.filtres)
+            for d in demandes:
+                self.tree_liste.insert('', 'end', values=(
+                    d['id'],
+                    d['matricule'],
+                    f"{d['prenom']} {d['nom']}",
+                    d['type_conge'],
+                    d['date_debut'],
+                    d['date_fin'],
+                    d['duree_jours'],
+                    self._format_statut(d['statut']),
+                    d['motif'][:50] + '...' if d['motif'] and len(d['motif']) > 50 else d['motif'],
+                    d.get('date_demande', d['created_at'])[:10]
+                ))
+        except Exception as e:
+            print(f"Erreur chargement demandes: {e}")
+
+    def charger_demandes_attente(self):
+        if not hasattr(self, 'tree_attente'):
+            return
+        for i in self.tree_attente.get_children():
+            self.tree_attente.delete(i)
+        try:
+            filtres = {'statut': 'en_attente'}
+            demandes = self.app.db.get_conges(filtres)
+            for d in demandes:
+                self.tree_attente.insert('', 'end', values=(
+                    d['id'],
+                    d['matricule'],
+                    f"{d['prenom']} {d['nom']}",
+                    d['type_conge'],
+                    d['date_debut'],
+                    d['date_fin'],
+                    d['duree_jours'],
+                    d['motif'][:50] + '...' if d['motif'] and len(d['motif']) > 50 else d['motif'],
+                    d.get('date_demande', d['created_at'])[:10]
+                ))
+        except Exception as e:
+            print(f"Erreur chargement demandes attente: {e}")
+
+    def appliquer_filtres(self):
+        self.filtres = {}
+        date_debut = self.filtre_date_debut.get_date().strftime('%Y-%m-%d')
+        date_fin = self.filtre_date_fin.get_date().strftime('%Y-%m-%d')
+        self.filtres['date_debut'] = date_debut
+        self.filtres['date_fin'] = date_fin
+        statut = self.filtre_statut.get()
+        if statut != 'Tous':
+            self.filtres['statut'] = statut
+        mat = self.filtre_matricule.get().strip()
+        if mat:
+            self.filtres['matricule'] = mat
+        typ = self.filtre_type.get()
+        if typ != 'Tous':
+            self.filtres['type_conge'] = typ
+        self.charger_demandes()
+
+    def approuver_demande(self):
+        sel = self.tree_attente.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Veuillez sélectionner une demande")
+            return
+        item = self.tree_attente.item(sel[0])
+        demande_id = item['values'][0]
+        if messagebox.askyesno("Confirmation", "Approuver cette demande de congé ?"):
+            if self.app.db.update_conge_statut(demande_id, 'approuve', self.app.current_user['username']):
+                messagebox.showinfo("Succès", "Demande approuvée")
+                self.charger_demandes_attente()
+                self.charger_demandes()
+                self.actualiser_statistiques()
+            else:
+                messagebox.showerror("Erreur", "Échec de l'approbation")
+
+    def refuser_demande(self):
+        sel = self.tree_attente.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Veuillez sélectionner une demande")
+            return
+        item = self.tree_attente.item(sel[0])
+        demande_id = item['values'][0]
+        motif_refus = tk.simpledialog.askstring("Motif du refus", "Veuillez indiquer le motif du refus :")
+        if motif_refus is not None:
+            if self.app.db.update_conge_statut(demande_id, 'refuse', self.app.current_user['username']):
+                messagebox.showinfo("Succès", "Demande refusée")
+                self.charger_demandes_attente()
+                self.charger_demandes()
+                self.actualiser_statistiques()
+            else:
+                messagebox.showerror("Erreur", "Échec du refus")
+
+    def afficher_details_demande(self, event=None):
+        sel = self.tree_liste.selection()
+        if not sel:
+            return
+        item = self.tree_liste.item(sel[0])
+        demande_id = item['values'][0]
+        self._afficher_details(demande_id)
+
+    def voir_details_attente(self):
+        sel = self.tree_attente.selection()
+        if not sel:
+            messagebox.showwarning("Attention", "Sélectionnez une demande")
+            return
+        item = self.tree_attente.item(sel[0])
+        demande_id = item['values'][0]
+        self._afficher_details(demande_id)
+
+    def _afficher_details(self, demande_id):
+        try:
+            with self.app.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT c.*, p.nom, p.prenom, p.fonction,
+                           dir.nom_direction as direction,
+                           s.nom_service as service
+                    FROM conges c
+                    JOIN personnel p ON c.personnel_id = p.id
+                    LEFT JOIN directions dir ON p.direction_id = dir.id
+                    LEFT JOIN services s ON p.service_id = s.id
+                    WHERE c.id = ?
+                ''', (demande_id,))
+                d = cursor.fetchone()
+                if not d:
+                    messagebox.showerror("Erreur", "Demande introuvable")
+                    return
+            details = f"""
+            📋 DÉTAILS DE LA DEMANDE DE CONGÉ
+
+            👤 AGENT :
+            • Matricule : {d['matricule']}
+            • Nom : {d['prenom']} {d['nom']}
+            • Fonction : {d['fonction']}
+            • Direction : {d['direction'] or '-'}
+            • Service : {d['service'] or '-'}
+
+            📅 PÉRIODE :
+            • Type de congé : {d['type_conge']}
+            • Du : {d['date_debut']} au {d['date_fin']}
+            • Durée : {d['duree_jours']} jours
+
+            📝 MOTIF :
+            {d['motif'] or 'Aucun motif'}
+
+            📎 JUSTIFICATIF :
+            {d['justificatif'] or 'Aucun justificatif'}
+
+            📊 STATUT :
+            • Statut : {self._format_statut(d['statut'])}
+            • Date de la demande : {d.get('date_demande', d['created_at'])[:10]}
+            • Approuvé par : {d['approuve_par'] or '-'}
+            • Date d'approbation : {d['date_approbation'][:10] if d['date_approbation'] else '-'}
+            """
+            messagebox.showinfo("Détails de la demande", details)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'afficher les détails: {e}")
+
+    def actualiser_statistiques(self):
+        try:
+            with self.app.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM conges")
+                total = cursor.fetchone()[0] or 0
+                self.stat_total.set(str(total))
+                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='en_attente'")
+                attente = cursor.fetchone()[0] or 0
+                self.stat_attente.set(str(attente))
+                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='approuve'")
+                approuve = cursor.fetchone()[0] or 0
+                self.stat_approuve.set(str(approuve))
+                cursor.execute("SELECT COUNT(*) FROM conges WHERE statut='refuse'")
+                refuse = cursor.fetchone()[0] or 0
+                self.stat_refuse.set(str(refuse))
+
+                cursor.execute('''
+                    SELECT type_conge, COUNT(*) as cnt
+                    FROM conges
+                    GROUP BY type_conge
+                    ORDER BY cnt DESC
+                    LIMIT 6
+                ''')
+                data_type = cursor.fetchall()
+                self.ax1.clear()
+                if data_type:
+                    types = [d['type_conge'] for d in data_type]
+                    counts = [d['cnt'] for d in data_type]
+                    self.ax1.bar(types, counts, color='#3498db')
+                    self.ax1.set_title('Par type de congé')
+                    self.ax1.tick_params(axis='x', rotation=45)
+                else:
+                    self.ax1.text(0.5, 0.5, 'Aucune donnée', ha='center', va='center')
+                    self.ax1.set_title('Par type de congé')
+
+                self.ax2.clear()
+                labels = ['En attente', 'Approuvées', 'Refusées']
+                valeurs = [attente, approuve, refuse]
+                couleurs = ['#f39c12', '#27ae60', '#e74c3c']
+                if sum(valeurs) > 0:
+                    self.ax2.pie(valeurs, labels=labels, colors=couleurs, autopct='%1.1f%%')
+                    self.ax2.set_title('Répartition par statut')
+                else:
+                    self.ax2.text(0.5, 0.5, 'Aucune donnée', ha='center', va='center')
+                    self.ax2.set_title('Répartition par statut')
+                self.canvas.draw()
+        except Exception as e:
+            print(f"Erreur stats congés: {e}")
+
+    def exporter_liste(self):
+        data = []
+        for i in self.tree_liste.get_children():
+            data.append(self.tree_liste.item(i)['values'])
+        if not data:
+            messagebox.showwarning("Attention", "Aucune donnée à exporter")
+            return
+        fn = filedialog.asksaveasfilename(defaultextension=".csv",
+                                          filetypes=[("CSV","*.csv"), ("Excel","*.xlsx")])
+        if fn:
+            try:
+                df = pd.DataFrame(data, columns=['ID','Matricule','Agent','Type','Début','Fin','Durée','Statut','Motif','Date demande'])
+                if fn.endswith('.csv'):
+                    df.to_csv(fn, index=False, encoding='utf-8-sig')
+                else:
+                    df.to_excel(fn, index=False)
+                messagebox.showinfo("Succès", f"Export terminé vers {fn}")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur export: {e}")
+
+    @staticmethod
+    def _format_statut(statut):
+        if statut == 'en_attente':
+            return '⏳ En attente'
+        elif statut == 'approuve':
+            return '✅ Approuvé'
+        elif statut == 'refuse':
+            return '❌ Refusé'
+        return statut
+
 
 # ============================================================
 # CLASSE PRINCIPALE (MainWindow)
@@ -5003,7 +5676,6 @@ class MainWindow:
         fig.subplots_adjust(hspace=0.4, wspace=0.3)
         ax1 = fig.add_subplot(121)
         
-        # Dans show_dashboard, remplacer la requête pour le graphique par :
         with self.app.db.get_connection() as conn:
             c = conn.cursor()
             c.execute("""
@@ -5063,7 +5735,6 @@ class MainWindow:
         self.dash_direction = ttk.Combobox(filtres_frame, width=18)
         self.dash_direction.grid(row=0, column=3, padx=5, pady=5)
         
-        # Récupérer les directions distinctes depuis personnel (colonne texte)
         with self.app.db.get_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT DISTINCT dir.nom_direction FROM personnel p LEFT JOIN directions dir ON p.direction_id = dir.id WHERE dir.nom_direction IS NOT NULL ORDER BY dir.nom_direction")
@@ -5119,7 +5790,7 @@ class MainWindow:
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.filtrer_personnel_dashboard()
 
-        # Top 5 retardataires (corrigé)
+        # Top 5 retardataires
         top_frame = tk.LabelFrame(scrollable_frame, text="🚨 Top 5 des retardataires (mois en cours)",
                                    font=('Arial', 12, 'bold'), bg='white')
         top_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
@@ -5135,11 +5806,12 @@ class MainWindow:
         with self.app.db.get_connection() as conn:
             c = conn.cursor()
             c.execute("""
-                SELECT r.matricule, p.nom, p.prenom, p.direction_id as direction,
+                SELECT r.matricule, p.nom, p.prenom, dir.nom_direction as direction,
                        COUNT(r.id) as nb_retards,
                        SUM(r.minutes_retard) as total_min
                 FROM retards_cumules r
                 JOIN personnel p ON r.personnel_id = p.id
+                LEFT JOIN directions dir ON p.direction_id = dir.id
                 WHERE r.date_retard BETWEEN ? AND ?
                 GROUP BY r.personnel_id
                 ORDER BY total_min DESC
@@ -5185,6 +5857,11 @@ class MainWindow:
     # GESTION DU PERSONNEL
     # ============================================================
     def show_personnel(self):
+        # Ajoutez ces attributs dans __init__ de MainWindow (ou dans show_personnel)
+        self.personnel_page = 0          # page courante (0-index)
+        self.personnel_per_page = 20     # lignes par page
+        self.personnel_total = 0
+        self.personnel_data = []         # toutes les données du personnel
         self.clear_content()
         tk.Label(self.content_frame, text="GESTION DU PERSONNEL", font=('Arial',16,'bold'),
                  bg='#ecf0f1').pack(pady=10)
@@ -5210,8 +5887,23 @@ class MainWindow:
         tree_f = tk.Frame(self.content_frame)
         tree_f.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         cols = ('ID','Matricule','Badge','Photo','Nom','Prénom','Type','Fonction','Direction','Département','Statut')
+        # Dans show_personnel, après la création de self.tree_pers, ajoutez un cadre pour les contrôles de pagination
+        control_frame = tk.Frame(self.content_frame, bg='#ecf0f1')
+        control_frame.pack(fill=tk.X, padx=20, pady=5)
+
+        tk.Label(control_frame, text="Lignes par page :", bg='#ecf0f1').pack(side=tk.LEFT, padx=5)
+        self.personnel_page_size = tk.StringVar(value="20")
+        page_size_spin = tk.Spinbox(control_frame, from_=5, to=200, textvariable=self.personnel_page_size, width=5, command=self.charger_personnel_page)
+        page_size_spin.pack(side=tk.LEFT, padx=5)
+
+        self.personnel_prev_btn = tk.Button(control_frame, text="◀ Précédent", command=self.personnel_page_prev, state=tk.DISABLED)
+        self.personnel_prev_btn.pack(side=tk.LEFT, padx=5)
+        self.personnel_next_btn = tk.Button(control_frame, text="Suivant ▶", command=self.personnel_page_next, state=tk.DISABLED)
+        self.personnel_next_btn.pack(side=tk.LEFT, padx=5)
+        self.personnel_page_label = tk.Label(control_frame, text="Page 1 / 1", bg='#ecf0f1')
+        self.personnel_page_label.pack(side=tk.LEFT, padx=10)
         self.tree_pers = ttk.Treeview(tree_f, columns=cols, show='headings', height=20)
-        wids = [50,100,100,120,120,100,150,120,120,80]
+        wids = [50,100,100,120,120,100,150,120,120,80,80]
         for c,w in zip(cols,wids):
             self.tree_pers.heading(c, text=c)
             self.tree_pers.column(c, width=w)
@@ -5220,7 +5912,7 @@ class MainWindow:
         self.tree_pers.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree_pers.bind('<Double-Button-1>', self.on_double_click_personnel)
-        self.charger_personnel()
+        self.charger_personnel_page()
 
     def charger_personnel(self):
         for i in self.tree_pers.get_children():
@@ -5235,11 +5927,59 @@ class MainWindow:
                 p.get('departement_nom', '-'),
                 p.get('statut', 'actif')
             ))
+    #----------------------------------------
+    def charger_personnel_page(self):
+        # Récupérer toutes les données (avec filtres éventuels)
+        # Vous pouvez conserver la recherche existante
+        search = self.search_entry.get().strip() if hasattr(self, 'search_entry') else ''
+        if search:
+            self.personnel_data = self.app.db.search_personnel(search)
+        else:
+            self.personnel_data = self.app.db.get_personnel()
+        self.personnel_total = len(self.personnel_data)
+        self.personnel_page = 0
+        self.afficher_personnel_page()
+
+    def afficher_personnel_page(self):
+        # Vider l'arbre
+        for i in self.tree_pers.get_children():
+            self.tree_pers.delete(i)
+        # Calculer les indices de début et fin
+        per_page = int(self.personnel_page_size.get())
+        start = self.personnel_page * per_page
+        end = min(start + per_page, self.personnel_total)
+        # Insérer les lignes
+        for p in self.personnel_data[start:end]:
+            self.tree_pers.insert('', 'end', values=(
+                p['id'], p['matricule'], p.get('badge_id', '-'),
+                p.get('photo', '-'), p['nom'], p['prenom'], p.get('type_person', '-'),
+                p.get('fonction', ''),
+                p.get('direction_nom', ''),
+                p.get('departement_nom', '-'),
+                p.get('statut', 'actif')
+            ))
+        # Mettre à jour les boutons et l'étiquette
+        total_pages = (self.personnel_total + per_page - 1) // per_page if self.personnel_total > 0 else 1
+        self.personnel_page_label.config(text=f"Page {self.personnel_page+1} / {total_pages}")
+        self.personnel_prev_btn.config(state=tk.NORMAL if self.personnel_page > 0 else tk.DISABLED)
+        self.personnel_next_btn.config(state=tk.NORMAL if (self.personnel_page+1)*per_page < self.personnel_total else tk.DISABLED)
+
+    def personnel_page_prev(self):
+        if self.personnel_page > 0:
+            self.personnel_page -= 1
+            self.afficher_personnel_page()
+
+    def personnel_page_next(self):
+        per_page = int(self.personnel_page_size.get())
+        if (self.personnel_page+1)*per_page < self.personnel_total:
+            self.personnel_page += 1
+            self.afficher_personnel_page()
+#----------------------------------------
 
     def search_personnel(self):
         t = self.search_entry.get().strip()
         if not t:
-            self.charger_personnel()
+            self.charger_personnel_page()
             return
         for i in self.tree_pers.get_children():
             self.tree_pers.delete(i)
@@ -5360,7 +6100,7 @@ class MainWindow:
         pointages_frame = tk.LabelFrame(scrollable, text="Derniers pointages",
                                         font=('Arial', 14, 'bold'), bg='white', fg='#3498db')
         pointages_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-        pointages = self.app.db.get_pointages_filtres(matricule=pers['matricule'], limit=20)
+        pointages = self.app.db.get_pointages_filtres(matricule=pers['matricule'])
         if pointages:
             text_widget = tk.Text(pointages_frame, height=8, width=80, font=('Courier', 9))
             text_widget.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
@@ -5732,16 +6472,22 @@ class MainWindow:
         if service == 'Tous':
             service = None
         equipe = self.dash_equipe.get()
-        if equipe == 'Tous':
+        if equipe == 'Toutes':
             equipe = None
 
         query = """
             SELECT p.matricule, p.nom, p.prenom, p.fonction,
-               dir.nom_direction as direction,
-               departement_id, service_id, equipe_id, p.statut
-               FROM personnel p
-               LEFT JOIN directions dir ON p.direction_id = dir.id
-               WHERE p.statut = 'actif'
+                   dir.nom_direction as direction,
+                   dep.nom_departement as departement,
+                   s.nom_service as service,
+                   e.nom_equipe as equipe,
+                   p.statut
+            FROM personnel p
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE p.statut = 'actif'
         """
         params = []
         if search:
@@ -5758,7 +6504,7 @@ class MainWindow:
             query += " AND s.nom_service = ?"
             params.append(service)
         if equipe:
-            query += " AND p.equipe = ?"
+            query += " AND e.nom_equipe = ?"
             params.append(equipe)
         query += " LIMIT 50"
 
@@ -5825,3 +6571,4 @@ if __name__ == "__main__":
         traceback.print_exc()
         input("\nAppuyez sur Entrée...")
         sys.exit(1)
+
