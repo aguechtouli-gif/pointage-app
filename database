@@ -60,10 +60,10 @@ class Database:
                     nom TEXT NOT NULL,
                     prenom TEXT NOT NULL,
                     type_person TEXT DEFAULT 'cadre',
-                    fonction TEXT NOT NULL,
+                    fonction TEXT,
                     activite_id INTEGER,
                     division_id INTEGER,
-                    direction_id INTEGER NOT NULL,
+                    direction_id INTEGER,
                     departement_id INTEGER,
                     service_id INTEGER,
                     equipe_id INTEGER,
@@ -457,7 +457,7 @@ class Database:
                 conn.commit()
         except Exception as e:
             print(f"⚠️ verify_and_fix_database: {e}")
-
+    
     # ------------------------------------------------------------
     # Données de test
     # ------------------------------------------------------------
@@ -588,10 +588,27 @@ class Database:
                 c.execute(query)
                 return [dict(row) for row in c.fetchall()]
 
-    def get_personnel_by_matricule(self, matricule):
+    def get_personnel_by_matricule(self, matricule='matricule'):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT * FROM personnel WHERE TRIM(UPPER(matricule)) = ?", (matricule.strip().upper(),))
+            # Nettoyage : on prend la partie avant le premier espace (si présent)
+            # pour extraire le vrai matricule
+            brut = matricule.strip()
+            # On cherche d'abord une correspondance exacte sur le matricule stocké
+            c.execute("SELECT * FROM personnel WHERE TRIM(UPPER(matricule)) = ?", (brut.upper(),))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            # Sinon, on cherche si le début de la chaîne correspond au matricule stocké
+            # (utile pour "EMP001 DUPONT Jean" vs "EMP001")
+            first_word = brut.split()[0].upper() if brut else ''
+            if first_word:
+                c.execute("SELECT * FROM personnel WHERE TRIM(UPPER(matricule)) = ?", (first_word,))
+                row = c.fetchone()
+                if row:
+                    return dict(row)
+            # Dernier recours : LIKE avec le début
+            c.execute("SELECT * FROM personnel WHERE ? LIKE TRIM(UPPER(matricule)) || '%'", (brut.upper(),))
             row = c.fetchone()
             return dict(row) if row else None
 
@@ -666,6 +683,58 @@ class Database:
             cursor.execute('DELETE FROM personnel WHERE id=?', (id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    def get_all_types_personnel(self):
+        """Retourne la liste de tous les types de personnel."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM types_personnel ORDER BY nom_type")
+            return [dict(row) for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------
+    # Méthodes get_* pour la hiérarchie
+    # ------------------------------------------------------------
+    def get_direction(self, direction_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM directions WHERE id = ?", (direction_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_division(self, division_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM divisions WHERE id = ?", (division_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_activite(self, activite_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM activites WHERE id = ?", (activite_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_departement(self, departement_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM departements WHERE id = ?", (departement_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_service(self, service_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM services WHERE id = ?", (service_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_equipe(self, equipe_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM equipes WHERE id = ?", (equipe_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     # ------------------------------------------------------------
     # Importation de fichier personnel
@@ -854,14 +923,16 @@ class Database:
             results['erreurs'] = results['total']
             results['details'].append(f"Erreur globale: {str(e)}")
             return results
-
+        
     # ------------------------------------------------------------
     # Importation de fichier pointages
-    # ------------------------------------------------------------
+    # ------------------------------------------------------------  
     def import_pointages_from_file(self, filepath, format_colonnes=None, user_id=None):
         import pandas as pd
         from datetime import datetime
         import os
+        import re
+        from collections import defaultdict
 
         results = {'total': 0, 'importes': 0, 'doublons': 0, 'erreurs': 0, 'non_concernes': 0, 'details': []}
         try:
@@ -874,6 +945,7 @@ class Database:
             results['total'] = len(df)
             print(f"[DEBUG] {len(df)} lignes lues. Colonnes : {list(df.columns)}")
 
+            # Déterminer les colonnes
             if format_colonnes:
                 matricule_col = format_colonnes.get('matricule')
                 datetime_col = format_colonnes.get('datetime')
@@ -900,79 +972,118 @@ class Database:
                 results['details'].append(f"Colonne '{datetime_col}' introuvable")
                 return results
 
+            # Grouper par agent et par jour
+            # Dictionnaire : (matricule_clean, date) -> liste des heures
+            agent_day_points = defaultdict(list)
+
+            # Première passe : lire toutes les lignes et collecter les heures
+            for idx, row in df.iterrows():
+                try:
+                    brut = str(row[matricule_col]).strip()
+                    if not brut or brut == 'nan':
+                        results['erreurs'] += 1
+                        results['details'].append(f"Ligne {idx+2}: matricule vide")
+                        continue
+
+                    # Extraction du matricule
+                    match = re.match(r'^([A-Za-z0-9]+)', brut)
+                    if match:
+                        matricule_clean = match.group(1).upper()
+                    else:
+                        matricule_clean = brut.split()[0].strip().upper()
+
+                    # Vérifier que l'agent existe (sinon on ne pourra pas importer)
+                    pers = self.get_personnel_by_matricule(matricule_clean)
+                    if not pers:
+                        results['erreurs'] += 1
+                        results['details'].append(f"Ligne {idx+2}: matricule '{matricule_clean}' inconnu")
+                        continue
+                    if not pers.get('concerne_pointage', 1):
+                        results['non_concernes'] += 1
+                        continue
+
+                    # Conversion datetime
+                    dt_val = row[datetime_col]
+                    if pd.isna(dt_val):
+                        results['erreurs'] += 1
+                        results['details'].append(f"Ligne {idx+2}: datetime vide")
+                        continue
+
+                    if isinstance(dt_val, (int, float)):
+                        dt = pd.to_datetime(dt_val, unit='D', origin='1899-12-30')
+                    else:
+                        dt_str = str(dt_val).strip()
+                        dt_str = ' '.join(dt_str.split())
+                        formats = [
+                            '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%Y-%m-%d %H:%M:%S',
+                            '%Y-%m-%d %H:%M', '%d/%m/%Y', '%Y-%m-%d'
+                        ]
+                        dt = None
+                        for fmt in formats:
+                            try:
+                                dt = datetime.strptime(dt_str, fmt)
+                                break
+                            except:
+                                continue
+                        if dt is None:
+                            try:
+                                dt = pd.to_datetime(dt_str)
+                            except:
+                                results['erreurs'] += 1
+                                results['details'].append(f"Ligne {idx+2}: datetime invalide '{dt_str}'")
+                            continue
+
+                    date_pt = dt.date()
+                    heure_pt = dt.time()
+
+                    # Stocker pour ce (matricule_clean, date)
+                    key = (matricule_clean, date_pt, pers['id'])
+                    agent_day_points[key].append((heure_pt, brut, pers))
+
+                except Exception as e:
+                    results['erreurs'] += 1
+                    results['details'].append(f"Ligne {idx+2}: {str(e)}")
+                    print(f"[ERROR] Ligne {idx+2}: {e}")
+
+            # Deuxième passe : pour chaque (agent, date), prendre min et max
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                for idx, row in df.iterrows():
-                    try:
-                        brut = str(row[matricule_col]).strip()
-                        if not brut or brut == 'nan':
-                            results['erreurs'] += 1
-                            results['details'].append(f"Ligne {idx+2}: matricule vide")
-                            continue
-                        first_part = brut.split()[0].split(',')[0].strip()
-                        matricule_clean = first_part.upper()
-                        print(f"[DEBUG] Ligne {idx+2}: brut='{brut}' -> extrait='{matricule_clean}'")
+                for (matricule_clean, date_pt, personnel_id), points in agent_day_points.items():
+                    if len(points) == 0:
+                        continue
+                    # Trier par heure
+                    points.sort(key=lambda x: x[0])
+                    # Heure min -> entrée, heure max -> sortie
+                    heure_entree = points[0][0]
+                    brut_entree = points[0][1]
+                    pers = points[0][2]
+                    heure_sortie = points[-1][0]
+                    brut_sortie = points[-1][1]
 
-                        pers = self.get_personnel_by_matricule(matricule_clean)
-                        if not pers:
-                            results['erreurs'] += 1
-                            results['details'].append(f"Ligne {idx+2}: matricule '{matricule_clean}' inconnu")
-                            continue
-                        if not pers.get('concerne_pointage', 1):
-                            results['non_concernes'] += 1
-                            continue
+                    # Insérer l'entrée
+                    cursor.execute('''
+                        INSERT INTO pointages (personnel_id, matricule, badge_id, type_pointage, date_pointage, heure_pointage, mode, user_id)
+                        VALUES (?,?,?,?,?,?,?,?)
+                    ''', (pers['id'], brut_entree, pers.get('badge_id'), 'entrée', date_pt, heure_entree.strftime('%H:%M:%S'), 'import', user_id))
+                    results['importes'] += 1
 
-                        dt_val = row[datetime_col]
-                        if pd.isna(dt_val):
-                            results['erreurs'] += 1
-                            results['details'].append(f"Ligne {idx+2}: datetime vide")
-                            continue
-                        if isinstance(dt_val, (int, float)):
-                            dt = pd.to_datetime(dt_val, unit='D', origin='1899-12-30')
-                        else:
-                            dt_str = str(dt_val).strip()
-                            dt_str = ' '.join(dt_str.split())
-                            try:
-                                dt = datetime.strptime(dt_str, '%d/%m/%Y %H:%M:%S')
-                            except:
-                                try:
-                                    dt = datetime.strptime(dt_str, '%d/%m/%Y %H:%M')
-                                except:
-                                    try:
-                                        dt = pd.to_datetime(dt_str)
-                                    except:
-                                        results['erreurs'] += 1
-                                        results['details'].append(f"Ligne {idx+2}: datetime invalide '{dt_str}'")
-                                        continue
-                        date_pt = dt.date()
-                        heure_pt = dt.time()
-                        print(f"[DEBUG]   date={date_pt}, heure={heure_pt}")
-
-                        type_pt = 'entrée'
-                        cursor.execute("""
-                            SELECT id FROM pointages
-                            WHERE personnel_id = ? AND date_pointage = ? AND type_pointage = ?
-                        """, (pers['id'], date_pt, type_pt))
-                        if cursor.fetchone():
-                            results['doublons'] += 1
-                            continue
-
+                    # Insérer la sortie si différente de l'entrée (même heure ? au cas où un seul pointage)
+                    if heure_entree != heure_sortie:
                         cursor.execute('''
                             INSERT INTO pointages (personnel_id, matricule, badge_id, type_pointage, date_pointage, heure_pointage, mode, user_id)
                             VALUES (?,?,?,?,?,?,?,?)
-                        ''', (pers['id'], brut, pers.get('badge_id'), type_pt, date_pt, heure_pt.strftime('%H:%M:%S'), 'import', user_id))
+                        ''', (pers['id'], brut_sortie, pers.get('badge_id'), 'sortie', date_pt, heure_sortie.strftime('%H:%M:%S'), 'import', user_id))
                         results['importes'] += 1
-                        print(f"[DEBUG]   ✅ Insertion réussie")
-                    except Exception as e:
-                        results['erreurs'] += 1
-                        results['details'].append(f"Ligne {idx+2}: {str(e)}")
-                        print(f"[ERROR] Ligne {idx+2}: {e}")
+                    else:
+                        results['details'].append(f"Agent {matricule_clean} le {date_pt}: un seul pointage, importé comme entrée uniquement")
                 conn.commit()
+
         except Exception as e:
             results['erreurs'] = results['total']
             results['details'].append(f"Erreur globale: {str(e)}")
             print(f"[ERROR] {e}")
         return results
+
 
     # ------------------------------------------------------------
     # Gestion des entités hiérarchiques
@@ -1063,9 +1174,9 @@ class Database:
     def get_all_quarts(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_quart FROM quarts_travail WHERE active = 1 ORDER BY nom_quart")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-
+            c.execute("SELECT id, nom_quart, heure_debut, heure_fin, est_nuit, duree_heures, description, couleur, active FROM quarts_travail WHERE active = 1 ORDER BY nom_quart")
+            return [dict(row) for row in c.fetchall()]
+        
     def add_quart(self, nom, heure_debut, heure_fin, est_nuit=False, duree_heures=None, description=None, couleur=None):
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -1075,11 +1186,12 @@ class Database:
             return c.lastrowid
 
     # ------------------------------------------------------------
-    # Gestion des pointages (filtres)
+    # Gestion des pointages (filtres) – version corrigée avec activite_id
     # ------------------------------------------------------------
     def get_pointages_filtres(self, date_debut=None, date_fin=None, matricule=None,
-                              type_pointage=None, direction_nom=None, departement_nom=None,
-                              service_nom=None, equipe_nom=None):
+                              type_pointage=None, activite_id=None, division_id=None,
+                              direction_id=None, departement_id=None, service_id=None, equipe_id=None,
+                              direction_nom=None, departement_nom=None, service_nom=None, equipe_nom=None):
         query = """
             SELECT pt.*,
                    p.matricule, p.nom, p.prenom, p.fonction,
@@ -1108,6 +1220,24 @@ class Database:
         if type_pointage:
             query += " AND pt.type_pointage = ?"
             params.append(type_pointage)
+        if activite_id:
+            query += " AND p.activite_id = ?"
+            params.append(activite_id)
+        if division_id:
+            query += " AND p.division_id = ?"
+            params.append(division_id)
+        if direction_id:
+            query += " AND p.direction_id = ?"
+            params.append(direction_id)
+        if departement_id:
+            query += " AND p.departement_id = ?"
+            params.append(departement_id)
+        if service_id:
+            query += " AND p.service_id = ?"
+            params.append(service_id)
+        if equipe_id:
+            query += " AND p.equipe_id = ?"
+            params.append(equipe_id)
         if direction_nom:
             query += " AND dir.nom_direction = ?"
             params.append(direction_nom)
@@ -1179,7 +1309,12 @@ class Database:
             stats['minutes_retard_periode'] = row[1] or 0
             c.execute("""
                 SELECT pt.*, p.matricule, p.nom, p.prenom, p.fonction,
-                       dir.nom_direction as direction_nom
+                       dir.nom_direction as direction_nom,
+                       COALESCE((
+                            SELECT SUM(minutes_retard) FROM retards_cumules 
+                            WHERE personnel_id = pt.personnel_id AND date_retard = pt.date_pointage
+                       ), 0) as minutes_retard
+                       
                 FROM pointages pt
                 JOIN personnel p ON pt.personnel_id = p.id
                 LEFT JOIN directions dir ON p.direction_id = dir.id
@@ -1394,48 +1529,240 @@ class Database:
             return None, "Non défini"
 
     # ------------------------------------------------------------
-    # Rapports
+    # Rapports – version corrigée avec type_rapport
     # ------------------------------------------------------------
-    def get_presence_report(self, date_debut, date_fin, direction_nom=None, departement_nom=None,
-                            service_nom=None, equipe_nom=None, matricule=None):
+    
+    #------------------------------------------------------------
+    # Rapport de présence avec filtres avancés
+    #------------------------------------------------------------
+    def get_presence_report(self, date_debut, date_fin, matricule=None, direction_nom=None,
+                        departement_nom=None, service_nom=None, equipe_nom=None,
+                        type_rapport='resume'):
+        from datetime import datetime, timedelta
+    
         debut = datetime.strptime(date_debut, '%Y-%m-%d').date()
         fin = datetime.strptime(date_fin, '%Y-%m-%d').date()
-        query = """
+    
+        # Calcul du nombre total de jours ouvrés dans la période (pour le taux de présence)
+        def est_weekend(d):
+            jours_weekend = [5, 6]  # Samedi=5, Dimanche=6 (adjust according to your config)
+            return d.weekday() in jours_weekend
+    
+        def est_ferie(d):
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM jours_feries WHERE date_jour = ?", (d,))
+                return c.fetchone()[0] > 0
+    
+        # Générer la liste des dates de la période
+        toutes_dates = []
+        jour = debut
+        while jour <= fin:
+            toutes_dates.append(jour)
+            jour += timedelta(days=1)
+    
+        # Requête pour récupérer les agents avec leurs infos
+        query_agents = """
             SELECT p.id, p.matricule, p.nom, p.prenom, p.fonction,
-                   dir.nom_direction as direction_nom,
-                   dep.nom_departement as departement_nom,
-                   s.nom_service as service_nom,
-                   e.nom_equipe as equipe_nom,
-                   COUNT(DISTINCT pt.date_pointage) as jours_presence
+                 dir.nom_direction as direction,
+                 dep.nom_departement as departement,
+                 s.nom_service as service,
+                 e.nom_equipe as equipe
             FROM personnel p
-            LEFT JOIN pointages pt ON p.id = pt.personnel_id AND pt.date_pointage BETWEEN ? AND ?
             LEFT JOIN directions dir ON p.direction_id = dir.id
             LEFT JOIN departements dep ON p.departement_id = dep.id
             LEFT JOIN services s ON p.service_id = s.id
             LEFT JOIN equipes e ON p.equipe_id = e.id
-            WHERE p.statut = 'actif'
+            WHERE p.statut = 'actif' AND p.concerne_pointage = 1
         """
-        params = [debut, fin]
-        if direction_nom:
-            query += " AND dir.nom_direction = ?"
-            params.append(direction_nom)
-        if departement_nom:
-            query += " AND dep.nom_departement = ?"
-            params.append(departement_nom)
-        if service_nom:
-            query += " AND s.nom_service = ?"
-            params.append(service_nom)
-        if equipe_nom:
-            query += " AND e.nom_equipe = ?"
-            params.append(equipe_nom)
+        params_agents = []
         if matricule:
-            query += " AND p.matricule LIKE ?"
-            params.append(f'%{matricule}%')
-        query += " GROUP BY p.id ORDER BY p.nom, p.prenom"
+            query_agents += " AND p.matricule = ?"
+            params_agents.append(matricule)
+        if direction_nom:
+            query_agents += " AND dir.nom_direction = ?"
+            params_agents.append(direction_nom)
+        if departement_nom:
+            query_agents += " AND dep.nom_departement = ?"
+            params_agents.append(departement_nom)
+        if service_nom:
+            query_agents += " AND s.nom_service = ?"
+            params_agents.append(service_nom)
+        if equipe_nom:
+            query_agents += " AND e.nom_equipe = ?"
+            params_agents.append(equipe_nom)
+    
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute(query, params)
-            return [dict(row) for row in c.fetchall()]
+            c.execute(query_agents, params_agents)
+            agents = c.fetchall()
+        
+            if type_rapport == 'resume':
+                resultats = []
+                for agent in agents:
+                    # Compter les jours de présence (au moins un pointage par jour)
+                    c.execute("""
+                        SELECT COUNT(DISTINCT date_pointage) as jours
+                        FROM pointages
+                        WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                    """, (agent['id'], debut, fin))
+                    row = c.fetchone()
+                    jours_presence = row['jours'] or 0
+                
+                    # Calculer le taux de présence (basé sur jours ouvrés)
+                    jours_ouvres = 0
+                    for d in toutes_dates:
+                        if not est_weekend(d) and not est_ferie(d):
+                            jours_ouvres += 1
+                    taux = (jours_presence / jours_ouvres * 100) if jours_ouvres > 0 else 0
+                
+                    resultats.append({
+                        'matricule': agent['matricule'],
+                        'nom': agent['nom'],
+                        'prenom': agent['prenom'],
+                        'fonction': agent['fonction'],
+                        'direction': agent['direction'] or '',
+                        'departement': agent['departement'] or '',
+                        'service': agent['service'] or '',
+                        'equipe': agent['equipe'] or '',
+                        'jours_presence': jours_presence,
+                        'taux_presence': round(taux, 1)
+                    })
+                return resultats
+        
+            else:  # type_rapport == 'detail'
+                details = []
+                for agent in agents:
+                    # Récupérer les pointages pour chaque jour de la période
+                    for date_pt in toutes_dates:
+                        c.execute("""
+                            SELECT heure_pointage, type_pointage
+                            FROM pointages
+                            WHERE personnel_id = ? AND date_pointage = ?
+                            ORDER BY heure_pointage
+                        """, (agent['id'], date_pt))
+                        pointages = c.fetchall()
+                    
+                        heure_entree = None
+                        heure_sortie = None
+                        for pt in pointages:
+                            if pt['type_pointage'] == 'entrée':
+                                heure_entree = pt['heure_pointage'][:5] if pt['heure_pointage'] else None
+                            elif pt['type_pointage'] == 'sortie':
+                                heure_sortie = pt['heure_pointage'][:5] if pt['heure_pointage'] else None
+                    
+                        details.append({
+                            'date': date_pt.strftime('%Y-%m-%d'),
+                            'matricule': agent['matricule'],
+                            'nom': agent['nom'],
+                            'prenom': agent['prenom'],
+                            'direction': agent['direction'] or '',
+                            'departement': agent['departement'] or '',
+                            'service': agent['service'] or '',
+                            'equipe': agent['equipe'] or '',
+                            'present': len(pointages) > 0,
+                            'heure_entree': heure_entree or '-',
+                            'heure_sortie': heure_sortie or '-'
+                        })
+                return details
+    
+    #------------------------------------------------------------
+    # Rapport d'absence avec filtres avancés
+    #------------------------------------------------------------
+    def get_absence_report(self, date_debut, date_fin, matricule=None, utilisateur_id=None,
+                           direction_nom=None, departement_nom=None, service_nom=None, equipe_nom=None,
+                           type_rapport=None):
+        debut = datetime.strptime(date_debut, '%Y-%m-%d').date()
+        fin = datetime.strptime(date_fin, '%Y-%m-%d').date()
+
+        query_agents = """
+            SELECT p.id, p.matricule, p.nom, p.prenom, p.fonction,
+                   dir.nom_direction as direction,
+                   dep.nom_departement as departement,
+                   s.nom_service as service,
+                   e.nom_equipe as equipe
+            FROM personnel p
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE p.statut = 'actif' AND p.concerne_pointage = 1
+        """
+        params_agents = []
+        if matricule:
+            query_agents += " AND p.matricule = ?"
+            params_agents.append(matricule)
+        if utilisateur_id:
+            query_agents += " AND p.id = ?"
+            params_agents.append(utilisateur_id)
+        if direction_nom:
+            query_agents += " AND dir.nom_direction = ?"
+            params_agents.append(direction_nom)
+        if departement_nom:
+            query_agents += " AND dep.nom_departement = ?"
+            params_agents.append(departement_nom)
+        if service_nom:
+            query_agents += " AND s.nom_service = ?"
+            params_agents.append(service_nom)
+        if equipe_nom:
+            query_agents += " AND e.nom_equipe = ?"
+            params_agents.append(equipe_nom)
+
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query_agents, params_agents)
+            agents = c.fetchall()
+
+            resultats = []
+            for agent in agents:
+                jours_ouvres = self._calculer_jours_ouvres(debut, fin)
+                nb_jours_ouvres = len(jours_ouvres)
+
+                c.execute("""
+                    SELECT COUNT(DISTINCT date_pointage)
+                    FROM pointages
+                    WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                """, (agent['id'], debut, fin))
+                nb_pointes = c.fetchone()[0] or 0
+
+                c.execute("""
+                    SELECT SUM(
+                        julianday(MIN(date_fin, ?)) - julianday(MAX(date_debut, ?)) + 1
+                    )
+                    FROM conges
+                    WHERE personnel_id = ? AND statut = 'approuve'
+                        AND date_debut <= ? AND date_fin >= ?
+                """, (fin, debut, agent['id'], fin, debut))
+                nb_conges = c.fetchone()[0] or 0
+                nb_conges = int(round(nb_conges))
+
+                absences = nb_jours_ouvres - nb_pointes - nb_conges
+                if absences < 0:
+                    absences = 0
+
+                resultats.append({
+                    'matricule': agent['matricule'],
+                    'nom': agent['nom'],
+                    'prenom': agent['prenom'],
+                    'direction': agent['direction'] or '',
+                    'departement': agent['departement'] or '',
+                    'service': agent['service'] or '',
+                    'equipe': agent['equipe'] or '',
+                    'jours_ouvres': nb_jours_ouvres,
+                    'pointes': nb_pointes,
+                    'conges': nb_conges,
+                    'absences': absences
+                })
+            return resultats
+
+    def _calculer_jours_ouvres(self, debut, fin):
+        jours = []
+        jour = debut
+        while jour <= fin:
+            if not self.est_weekend(jour) and not self.est_jour_ferie(jour):
+                jours.append(jour)
+            jour += timedelta(days=1)
+        return jours
 
     # ------------------------------------------------------------
     # Heures travaillées (pour rapport)
@@ -1443,7 +1770,8 @@ class Database:
     def get_heures_travaillees(self, matricule, date_debut, date_fin):
         # Implémentation simplifiée
         return []
-        # ------------------------------------------------------------
+
+    # ------------------------------------------------------------
     # Rapports et calculs
     # ------------------------------------------------------------
     def _calculer_heures_jour(self, pts):
@@ -1468,10 +1796,13 @@ class Database:
             return total
         return 0
 
+    #---------------------------------------------------------------------------------------
+    # Retards cumulés avec filtres avancés
+    #---------------------------------------------------------------------------------------
     def get_retard_report(self, date_debut, date_fin, matricule=None, direction_nom=None,
-                          departement_nom=None, service_nom=None, equipe_nom=None,
-                          type_rapport='resume', utiliser_globaux=False):
-        from datetime import datetime, timedelta
+                      departement_nom=None, service_nom=None, equipe_nom=None,
+                      type_rapport='resume', utiliser_globaux=False):
+        from datetime import datetime
 
         def heure_en_minutes(h):
             try:
@@ -1485,19 +1816,24 @@ class Database:
 
         if utiliser_globaux:
             heure_entree_globale = self.get_parametre('heure_entree_globale', '08:00:00')
-            tolerance_globale = int(self.get_parametre('tolerance_retard_globale', '0'))
+            heure_sortie_globale = self.get_parametre('heure_sortie_globale', '17:00:00')
+            tolerance_entree_globale = int(self.get_parametre('tolerance_retard_globale', '0'))
+            tolerance_sortie_globale = int(self.get_parametre('tolerance_depart_anticipe', '0'))
         else:
-            heure_entree_globale = None
-            tolerance_globale = 0
+            heure_entree_globale = heure_sortie_globale = None
+            tolerance_entree_globale = tolerance_sortie_globale = 0
 
-        query = """
+        # Requête pour les entrées
+        query_entrees = """
             SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom,
                    p.heure_entree_theorique, p.tolerance_entree,
+                   p.heure_sortie_theorique, p.tolerance_sortie,
                    pt.date_pointage, pt.heure_pointage,
                    dir.nom_direction as direction_nom,
                    dep.nom_departement as departement_nom,
                    s.nom_service as service_nom,
-                   e.nom_equipe as equipe_nom
+                   e.nom_equipe as equipe_nom,
+                   'entree' as type_pointage
             FROM pointages pt
             JOIN personnel p ON pt.personnel_id = p.id
             LEFT JOIN directions dir ON p.direction_id = dir.id
@@ -1508,36 +1844,66 @@ class Database:
               AND pt.date_pointage BETWEEN ? AND ?
               AND pt.type_pointage = 'entrée'
         """
-        params = [debut, fin]
-        if matricule:
-            query += " AND p.matricule LIKE ?"
-            params.append(f'%{matricule}%')
-        if direction_nom:
-            query += " AND dir.nom_direction = ?"
-            params.append(direction_nom)
-        if departement_nom:
-            query += " AND dep.nom_departement = ?"
-            params.append(departement_nom)
-        if service_nom:
-            query += " AND s.nom_service = ?"
-            params.append(service_nom)
-        if equipe_nom:
-            query += " AND e.nom_equipe = ?"
-            params.append(equipe_nom)
+        params_entrees = [debut, fin]
+
+        # Requête pour les sorties
+        query_sorties = """
+            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom,
+                  p.heure_entree_theorique, p.tolerance_entree,
+                  p.heure_sortie_theorique, p.tolerance_sortie,
+                  pt.date_pointage, pt.heure_pointage,
+                  dir.nom_direction as direction_nom,
+                  dep.nom_departement as departement_nom,
+                  s.nom_service as service_nom,
+                  e.nom_equipe as equipe_nom,
+                  'sortie' as type_pointage
+            FROM pointages pt
+            JOIN personnel p ON pt.personnel_id = p.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE p.statut = 'actif'
+              AND pt.date_pointage BETWEEN ? AND ?
+              AND pt.type_pointage = 'sortie'
+        """
+        params_sorties = [debut, fin]
+
+        # Ajout des filtres communs
+        def ajouter_filtres(query, params, matricule, direction_nom, departement_nom, service_nom, equipe_nom):
+            if matricule:
+                query += " AND p.matricule LIKE ?"
+                params.append(f'%{matricule}%')
+            if direction_nom:
+                query += " AND dir.nom_direction = ?"
+                params.append(direction_nom)
+            if departement_nom:
+                query += " AND dep.nom_departement = ?"
+                params.append(departement_nom)
+            if service_nom:
+                query += " AND s.nom_service = ?"
+                params.append(service_nom)
+            if equipe_nom:
+                query += " AND e.nom_equipe = ?"
+                params.append(equipe_nom)
+            return query, params
+
+        query_entrees, params_entrees = ajouter_filtres(query_entrees, params_entrees, matricule, direction_nom, departement_nom, service_nom, equipe_nom)
+        query_sorties, params_sorties = ajouter_filtres(query_sorties, params_sorties, matricule, direction_nom, departement_nom, service_nom, equipe_nom)
 
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute(query, params)
-            rows = c.fetchall()
-
-            if not rows:
-                return []
+            c.execute(query_entrees, params_entrees)
+            rows_entrees = c.fetchall()
+            c.execute(query_sorties, params_sorties)
+            rows_sorties = c.fetchall()
 
             penalite_par_min = float(self.get_parametre('penalite_retard', '0.50'))
 
             if type_rapport == 'resume':
                 resume = {}
-                for row in rows:
+                # Traitement des entrées
+                for row in rows_entrees:
                     pid = row['personnel_id']
                     if pid not in resume:
                         resume[pid] = {
@@ -1549,18 +1915,18 @@ class Database:
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or '',
                             'nb_retards': 0,
-                            'total_min': 0,
-                            'justifie': 0,
-                            'non_justifie': 0,
+                            'total_min_retard': 0,
+                            'nb_departs_anticipes': 0,
+                            'total_min_anticipe': 0,
                             'penalite': 0.0
                         }
 
                     if utiliser_globaux:
                         heure_theorique = heure_entree_globale
-                        tolerance = tolerance_globale
+                        tolerance = tolerance_entree_globale
                     else:
-                        heure_theorique = row['heure_entree_theorique']
-                        tolerance = row['tolerance_entree']
+                        heure_theorique = row['heure_entree_theorique'] or '08:00:00'
+                        tolerance = row['tolerance_entree'] or 0
 
                     minutes_pt = heure_en_minutes(row['heure_pointage'])
                     minutes_th = heure_en_minutes(heure_theorique)
@@ -1568,30 +1934,14 @@ class Database:
 
                     if retard > 0:
                         resume[pid]['nb_retards'] += 1
-                        resume[pid]['total_min'] += retard
-                        resume[pid]['non_justifie'] += retard
+                        resume[pid]['total_min_retard'] += retard
                         resume[pid]['penalite'] += retard * penalite_par_min
 
-                resultats = list(resume.values())
-                resultats.sort(key=lambda x: x['total_min'], reverse=True)
-                return resultats
-
-            else:
-                details = []
-                for row in rows:
-                    if utiliser_globaux:
-                        heure_theorique = heure_entree_globale
-                        tolerance = tolerance_globale
-                    else:
-                        heure_theorique = row['heure_entree_theorique']
-                        tolerance = row['tolerance_entree']
-
-                    minutes_pt = heure_en_minutes(row['heure_pointage'])
-                    minutes_th = heure_en_minutes(heure_theorique)
-                    retard = minutes_pt - minutes_th - tolerance
-
-                    if retard > 0:
-                        details.append({
+                # Traitement des sorties
+                for row in rows_sorties:
+                    pid = row['personnel_id']
+                    if pid not in resume:
+                        resume[pid] = {
                             'matricule': row['matricule'],
                             'nom': row['nom'],
                             'prenom': row['prenom'],
@@ -1599,234 +1949,98 @@ class Database:
                             'departement': row['departement_nom'] or '',
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or '',
+                            'nb_retards': 0,
+                            'total_min_retard': 0,
+                            'nb_departs_anticipes': 0,
+                            'total_min_anticipe': 0,
+                            'penalite': 0.0
+                        }
+
+                    if utiliser_globaux:
+                        heure_theorique = heure_sortie_globale
+                        tolerance = tolerance_sortie_globale
+                    else:
+                        heure_theorique = row['heure_sortie_theorique'] or '17:00:00'
+                        tolerance = row['tolerance_sortie'] or 0
+
+                    minutes_pt = heure_en_minutes(row['heure_pointage'])
+                    minutes_th = heure_en_minutes(heure_theorique)
+                    anticipe = minutes_th - minutes_pt - tolerance
+
+                    if anticipe > 0:
+                        resume[pid]['nb_departs_anticipes'] += 1
+                        resume[pid]['total_min_anticipe'] += anticipe
+
+                resultats = list(resume.values())
+                resultats.sort(key=lambda x: x['total_min_retard'] + x['total_min_anticipe'], reverse=True)
+                return resultats
+
+            else:  # type_rapport == 'detail'
+                details = []
+            
+                # Entrées en retard
+                for row in rows_entrees:
+                    if utiliser_globaux:
+                        heure_theorique = heure_entree_globale
+                        tolerance = tolerance_entree_globale
+                    else:
+                        heure_theorique = row['heure_entree_theorique'] or '08:00:00'
+                        tolerance = row['tolerance_entree'] or 0
+
+                    minutes_pt = heure_en_minutes(row['heure_pointage'])
+                    minutes_th = heure_en_minutes(heure_theorique)
+                    retard = minutes_pt - minutes_th - tolerance
+
+                    if retard > 0:
+                        details.append({
                             'date': row['date_pointage'],
-                            'heure': row['heure_pointage'],
+                            'heure': row['heure_pointage'][:5] if row['heure_pointage'] else '',
+                            'type': 'Entrée en retard',
+                            'matricule': row['matricule'],
+                            'nom': row['nom'],
+                            'prenom': row['prenom'],
                             'minutes': round(retard, 2),
                             'justifie': 'Non',
                             'motif': '',
-                            'penalite': round(retard * penalite_par_min, 2)
+                            'direction': row['direction_nom'] or '',
+                            'departement': row['departement_nom'] or '',
+                            'service': row['service_nom'] or '',
+                            'equipe': row['equipe_nom'] or ''
                         })
+
+                # Sorties anticipées
+                for row in rows_sorties:
+                    if utiliser_globaux:
+                        heure_theorique = heure_sortie_globale
+                        tolerance = tolerance_sortie_globale
+                    else:
+                        heure_theorique = row['heure_sortie_theorique'] or '17:00:00'
+                        tolerance = row['tolerance_sortie'] or 0
+
+                    minutes_pt = heure_en_minutes(row['heure_pointage'])
+                    minutes_th = heure_en_minutes(heure_theorique)
+                    anticipe = minutes_th - minutes_pt - tolerance
+
+                    if anticipe > 0:
+                        details.append({
+                            'date': row['date_pointage'],
+                            'heure': row['heure_pointage'][:5] if row['heure_pointage'] else '',
+                            'type': 'Sortie anticipée',
+                            'matricule': row['matricule'],
+                            'nom': row['nom'],
+                            'prenom': row['prenom'],
+                            'minutes': round(anticipe, 2),
+                            'justifie': 'Non',
+                            'motif': '',
+                            'direction': row['direction_nom'] or '',
+                            'departement': row['departement_nom'] or '',
+                            'service': row['service_nom'] or '',
+                            'equipe': row['equipe_nom'] or ''
+                        })
+
+                details.sort(key=lambda x: x['date'], reverse=True)
                 return details
-
-    def get_heures_supplementaires(self, matricule=None, date_debut=None, date_fin=None, statut=None):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            query = '''
-                SELECT h.*, p.nom, p.prenom
-                FROM heures_supplementaires h
-                JOIN personnel p ON h.personnel_id = p.id
-                WHERE 1=1
-            '''
-            params = []
-            if matricule:
-                query += ' AND h.matricule = ?'
-                params.append(matricule)
-            if date_debut:
-                query += ' AND h.date_heure_debut >= ?'
-                params.append(date_debut)
-            if date_fin:
-                query += ' AND h.date_heure_fin <= ?'
-                params.append(date_fin)
-            if statut:
-                query += ' AND h.statut = ?'
-                params.append(statut)
-            query += ' ORDER BY h.date_heure_debut DESC'
-            cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def add_heure_supplementaire(self, personnel_id, matricule, date_debut, date_fin,
-                                 duree, type_sup='normale', taux=1.25, motif=None):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            from datetime import datetime
-            debut = datetime.strptime(date_debut, '%Y-%m-%d %H:%M')
-            est_weekend = 1 if debut.weekday() >= 5 else 0
-            cursor.execute('SELECT COUNT(*) FROM jours_feries WHERE date_jour=?', (debut.date(),))
-            est_jferie = cursor.fetchone()[0]
-            cursor.execute('''
-                INSERT INTO heures_supplementaires (
-                    personnel_id, matricule, date_heure_debut, date_heure_fin,
-                    duree_heures, type_heure_sup, taux_majoration,
-                    est_weekend, est_jour_ferie, motif, statut
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,'en_attente')
-            ''', (personnel_id, matricule, date_debut, date_fin, duree,
-                  type_sup, taux, est_weekend, est_jferie, motif))
-            conn.commit()
-            return cursor.lastrowid
-
-    def update_heure_sup_statut(self, hs_id, statut, approuve_par):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE heures_supplementaires SET statut=?, approuve_par=?, date_approbation=?
-                WHERE id=?
-            ''', (statut, approuve_par, datetime.now(), hs_id))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    # ------------------------------------------------------------
-    # Congés
-    # ------------------------------------------------------------
-    def add_conge(self, data):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO conges (personnel_id, matricule, type_conge, date_debut, date_fin,
-                    duree_jours, motif, justificatif, statut, date_demande)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            ''', data)
-            conn.commit()
-            return cursor.lastrowid
-
-    def get_conges(self, filtres=None):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            query = '''
-                SELECT c.*, p.nom, p.prenom,
-                       dir.nom_direction as direction,
-                       s.nom_service as service
-                FROM conges c
-                JOIN personnel p ON c.personnel_id = p.id
-                LEFT JOIN directions dir ON p.direction_id = dir.id
-                LEFT JOIN services s ON p.service_id = s.id
-                WHERE 1=1
-            '''
-            params = []
-            if filtres:
-                if 'statut' in filtres and filtres['statut'] != 'Tous':
-                    query += ' AND c.statut = ?'
-                    params.append(filtres['statut'])
-                if 'matricule' in filtres and filtres['matricule']:
-                    query += ' AND c.matricule = ?'
-                    params.append(filtres['matricule'])
-                if 'date_debut' in filtres and filtres['date_debut']:
-                    query += ' AND c.date_debut >= ?'
-                    params.append(filtres['date_debut'])
-                if 'date_fin' in filtres and filtres['date_fin']:
-                    query += ' AND c.date_fin <= ?'
-                    params.append(filtres['date_fin'])
-                if 'type_conge' in filtres and filtres['type_conge'] != 'Tous':
-                    query += ' AND c.type_conge = ?'
-                    params.append(filtres['type_conge'])
-            query += ' ORDER BY c.date_demande DESC, c.created_at DESC'
-            cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def update_conge_statut(self, conge_id, statut, approuve_par):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE conges SET statut=?, approuve_par=?, date_approbation=?, updated_at=?
-                WHERE id=?
-            ''', (statut, approuve_par, datetime.now(), datetime.now(), conge_id))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    # ------------------------------------------------------------
-    # Jours fériés
-    # ------------------------------------------------------------
-    def get_all_jours_feries(self):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jours_feries ORDER BY date_jour DESC')
-            return [dict(row) for row in cursor.fetchall()]
-
-    def add_jour_ferie(self, date_jour, nom, desc=None):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('INSERT OR IGNORE INTO jours_feries (date_jour, nom, description) VALUES (?,?,?)',
-                           (date_jour, nom, desc))
-            conn.commit()
-            return cursor.lastrowid
-
-    def delete_jour_ferie(self, jid):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM jours_feries WHERE id=?', (jid,))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    # ------------------------------------------------------------
-    # Paramètres
-    # ------------------------------------------------------------
-    def get_parametre(self, cle, default=''):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT valeur FROM parametres WHERE cle=?', (cle,))
-            row = cursor.fetchone()
-            return row[0] if row else default
-
-    def set_parametre(self, cle, valeur):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM parametres WHERE cle = ?", (cle,))
-            if cursor.fetchone()[0] > 0:
-                cursor.execute("UPDATE parametres SET valeur = ? WHERE cle = ?", (valeur, cle))
-            else:
-                cursor.execute("INSERT INTO parametres (cle, valeur) VALUES (?, ?)", (cle, valeur))
-            conn.commit()
-
-    # ------------------------------------------------------------
-    # Utilitaires
-    # ------------------------------------------------------------
-    def est_weekend(self, date_obj):
-        jours_str = self.get_parametre('jours_weekend', '5,6')
-        jours_weekend = [int(x.strip()) for x in jours_str.split(',') if x.strip()]
-        return date_obj.weekday() in jours_weekend
-
-    def est_jour_ferie(self, date_obj):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM jours_feries WHERE date_jour=?", (date_obj,))
-            return c.fetchone()[0] > 0
-
-    def sauvegarder_photo(self, fichier, matricule):
-        import os
-        from werkzeug.utils import secure_filename
-        dossier = os.path.join('pointage_data', 'photos')
-        os.makedirs(dossier, exist_ok=True)
-        ext = os.path.splitext(fichier.filename)[1]
-        nom_fichier = secure_filename(f"photo_{matricule}{ext}")
-        chemin = os.path.join(dossier, nom_fichier)
-        fichier.save(chemin)
-        return chemin
-
-    def purger_anciennes_donnees(self):
-        try:
-            duree = int(self.get_parametre('duree_conservation_mois', '12'))
-        except:
-            duree = 12
-        date_limite = (datetime.now() - timedelta(days=30 * duree)).strftime('%Y-%m-%d')
-        result = {'pointages': 0, 'retards': 0, 'logs': 0}
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM pointages WHERE date_pointage < ?', (date_limite,))
-            result['pointages'] = c.rowcount
-            c.execute('DELETE FROM retards_cumules WHERE date_retard < ?', (date_limite,))
-            result['retards'] = c.rowcount
-            date_logs = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d %H:%M:%S')
-            c.execute('DELETE FROM logs WHERE created_at < ?', (date_logs,))
-            result['logs'] = c.rowcount
-            conn.commit()
-        return result
-
-    def generer_rapport_presence_pdf(self, date_debut, date_fin, direction=None):
-        from pdf_reports import write_report
-        from flask import render_template
-        import tempfile
-        rapport = self.get_presence_report(date_debut, date_fin, direction)
-        donnees = [dict(row) for row in rapport]
-        html = render_template('rapports/rapport_presence.html',
-                               titre="Rapport de présence",
-                               date_debut=date_debut,
-                               date_fin=date_fin,
-                               donnees=donnees,
-                               date_generation=datetime.now().strftime('%d/%m/%Y %H:%M'))
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-            pdf_path = tmp.name
-        write_report(html, pdf_path)
-        return pdf_path
-
+    #--------------------------------------------------------------------------------------
     def get_retards_avec_filtres(self, agent_id=None, direction=None, departement=None,
                                  service=None, equipe=None, date_debut=None, date_fin=None):
         with self.get_connection() as conn:
@@ -1958,11 +2172,52 @@ class Database:
 
             return resultats
 
-    def _calculer_jours_ouvres(self, debut, fin):
-        jours = []
-        jour = debut
-        while jour <= fin:
-            if not self.est_weekend(jour) and not self.est_jour_ferie(jour):
-                jours.append(jour)
-            jour += timedelta(days=1)
-        return jours
+    # ------------------------------------------------------------
+    # Utilitaires
+    # ------------------------------------------------------------
+    def sauvegarder_photo(self, fichier, matricule):
+        import os
+        from werkzeug.utils import secure_filename
+        dossier = os.path.join('pointage_data', 'photos')
+        os.makedirs(dossier, exist_ok=True)
+        ext = os.path.splitext(fichier.filename)[1]
+        nom_fichier = secure_filename(f"photo_{matricule}{ext}")
+        chemin = os.path.join(dossier, nom_fichier)
+        fichier.save(chemin)
+        return chemin
+
+    def purger_anciennes_donnees(self):
+        try:
+            duree = int(self.get_parametre('duree_conservation_mois', '12'))
+        except:
+            duree = 12
+        date_limite = (datetime.now() - timedelta(days=30 * duree)).strftime('%Y-%m-%d')
+        result = {'pointages': 0, 'retards': 0, 'logs': 0}
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('DELETE FROM pointages WHERE date_pointage < ?', (date_limite,))
+            result['pointages'] = c.rowcount
+            c.execute('DELETE FROM retards_cumules WHERE date_retard < ?', (date_limite,))
+            result['retards'] = c.rowcount
+            date_logs = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d %H:%M:%S')
+            c.execute('DELETE FROM logs WHERE created_at < ?', (date_logs,))
+            result['logs'] = c.rowcount
+            conn.commit()
+        return result
+
+    def generer_rapport_presence_pdf(self, date_debut, date_fin, direction=None):
+        from pdf_reports import write_report
+        from flask import render_template
+        import tempfile
+        rapport = self.get_presence_report(date_debut, date_fin, direction)
+        donnees = [dict(row) for row in rapport]
+        html = render_template('rapports/rapport_presence.html',
+                               titre="Rapport de présence",
+                               date_debut=date_debut,
+                               date_fin=date_fin,
+                               donnees=donnees,
+                               date_generation=datetime.now().strftime('%d/%m/%Y %H:%M'))
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            pdf_path = tmp.name
+        write_report(html, pdf_path)
+        return pdf_path
