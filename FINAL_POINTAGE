@@ -22,7 +22,47 @@ import tempfile
 
 # Import de la classe Database depuis database.py
 from database import Database
+#from utils import paginate
+from flask import session
+import pdfkit
 
+PATH_WKHTMLTOPDF = r"C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe"   # adaptez si nécessaire
+config = pdfkit.configuration(wkhtmltopdf=PATH_WKHTMLTOPDF)
+
+#-----------------------------------------------------------------
+# Fonction utilitaire pour convertir un DataFrame en PDF
+#-----------------------------------------------------------------
+def dataframe_to_pdf(df, titre, filename, orientation='portrait'):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+
+    if orientation == 'landscape':
+        pagesize = landscape(A4)
+    else:
+        pagesize = A4
+    doc = SimpleDocTemplate(filename, pagesize=pagesize,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = styles['Title']
+    elements.append(Paragraph(titre, title_style))
+    elements.append(Spacer(1, 0.5*cm))
+    data = [df.columns.tolist()] + df.values.tolist()
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.grey),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+        ('GRID', (0,0), (-1,-1), 1, colors.black),
+    ]))
+    elements.append(table)
+    doc.build(elements)
 # ============================================================
 # Fonction utilitaire pour convertir une heure en minutes
 # ============================================================
@@ -121,12 +161,37 @@ def dashboard():
 @app.route('/personnel')
 @login_required
 def liste_personnel():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
     search = request.args.get('search', '')
+    # Construire la requête (avec jointures pour les noms)
+    query = """
+        SELECT p.id, p.matricule, p.nom, p.prenom, p.fonction,
+               dir.nom_direction as direction,
+               dep.nom_departement as departement,
+               s.nom_service as service,
+               e.nom_equipe as equipe,
+               p.statut
+        FROM personnel p
+        LEFT JOIN directions dir ON p.direction_id = dir.id
+        LEFT JOIN departements dep ON p.departement_id = dep.id
+        LEFT JOIN services s ON p.service_id = s.id
+        LEFT JOIN equipes e ON p.equipe_id = e.id
+        WHERE 1=1
+    """
+    params = []
     if search:
-        personnel = db.search_personnel(search)
-    else:
-        personnel = db.get_personnel()
-    return render_template('personnel/liste.html', personnel=personnel, search=search)
+        query += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ?)"
+        search_pattern = f'%{search}%'
+        params.extend([search_pattern, search_pattern, search_pattern])
+    query += " ORDER BY p.nom, p.prenom"
+    items, total, page, total_pages = paginate(query, page, per_page, params)
+    return render_template('personnel/liste.html',
+                           personnel=items,
+                           page=page,
+                           total_pages=total_pages,
+                           per_page=per_page,
+                           search=search)
 
 @app.route('/personnel/<int:pid>')
 @login_required
@@ -149,6 +214,7 @@ def detail_personnel(pid):
         else:
             pt['minutes_retard'] = 0
     return render_template('personnel/details.html', pers=pers, pointages=pointages[:20])
+
 
 @app.route('/personnel/ajouter', methods=['GET', 'POST'])
 @login_required
@@ -636,61 +702,123 @@ def export_personnel_pdf(pid):
 @app.route('/pointages')
 @login_required
 def liste_pointages():
+    # Récupération des paramètres de pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    # Récupération des filtres
     date_debut = request.args.get('date_debut', '')
     date_fin = request.args.get('date_fin', '')
     matricule = request.args.get('matricule', '')
-    activite_id = request.args.get('activite_id', '')
-    division_id = request.args.get('division_id', '')
-    direction_id = request.args.get('direction_id', '')
-    departement_id = request.args.get('departement_id', '')
-    service_id = request.args.get('service_id', '')
-    equipe_id = request.args.get('equipe_id', '')
+    activite_id = request.args.get('activite_id', type=int)
+    division_id = request.args.get('division_id', type=int)
+    direction_id = request.args.get('direction_id', type=int)
+    departement_id = request.args.get('departement_id', type=int)
+    service_id = request.args.get('service_id', type=int)
+    equipe_id = request.args.get('equipe_id', type=int)
 
-    pointages = db.get_pointages_filtres(
-        date_debut=date_debut,
-        date_fin=date_fin,
-        matricule=matricule,
-        activite_id=activite_id,
-        division_id=division_id,
-        direction_id=direction_id,
-        departement_id=departement_id,
-        service_id=service_id,
-        equipe_id=equipe_id
-    )
+    # Construction de la requête SQL
+    query = """
+        SELECT pt.id, pt.date_pointage, pt.heure_pointage, pt.type_pointage, pt.mode,
+               p.matricule, p.nom, p.prenom, p.fonction,
+               u.username as utilisateur
+        FROM pointages pt
+        JOIN personnel p ON pt.personnel_id = p.id
+        LEFT JOIN utilisateurs u ON pt.user_id = u.id
+        WHERE 1=1
+    """
+    params = []
 
+    if date_debut:
+        query += " AND pt.date_pointage >= ?"
+        params.append(date_debut)
+    if date_fin:
+        query += " AND pt.date_pointage <= ?"
+        params.append(date_fin)
+    if matricule:
+        query += " AND p.matricule LIKE ?"
+        params.append(f'%{matricule}%')
+    if activite_id:
+        query += " AND p.activite_id = ?"
+        params.append(activite_id)
+    if division_id:
+        query += " AND p.division_id = ?"
+        params.append(division_id)
+    if direction_id:
+        query += " AND p.direction_id = ?"
+        params.append(direction_id)
+    if departement_id:
+        query += " AND p.departement_id = ?"
+        params.append(departement_id)
+    if service_id:
+        query += " AND p.service_id = ?"
+        params.append(service_id)
+    if equipe_id:
+        query += " AND p.equipe_id = ?"
+        params.append(equipe_id)
+
+    # Compter le nombre total d'enregistrements
+    count_query = f"SELECT COUNT(*) FROM ({query}) AS sub"
     with db.get_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT id, nom_activite FROM activites WHERE active = 1 ORDER BY nom_activite")
-        activites = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-        c.execute("SELECT id, nom_division FROM divisions WHERE active = 1 ORDER BY nom_division")
-        divisions = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-        c.execute("SELECT id, nom_direction FROM directions WHERE active = 1 ORDER BY nom_direction")
-        directions = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-        c.execute("SELECT id, nom_departement FROM departements WHERE active = 1 ORDER BY nom_departement")
-        departements = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-        c.execute("SELECT id, nom_service FROM services WHERE active = 1 ORDER BY nom_service")
-        services = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-        c.execute("SELECT id, nom_equipe FROM equipes WHERE active = 1 ORDER BY nom_equipe")
-        equipes = [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
+        cursor = conn.cursor()
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+
+    # Pagination
+    offset = (page - 1) * per_page
+    query += " ORDER BY pt.date_pointage DESC, pt.heure_pointage DESC LIMIT ? OFFSET ?"
+    params_pag = params + [per_page, offset]
+    cursor.execute(query, params_pag)
+    pointages = [dict(row) for row in cursor.fetchall()]
+
+    # Récupération des listes pour les filtres
+    activites = db.get_all_activites()
+    divisions = db.get_all_divisions()
+    directions = db.get_all_directions()
+    departements = db.get_all_departements()
+    services = db.get_all_services()
+    equipes = db.get_all_equipes()
+
+    # Construction du dictionnaire des filtres pour la pagination (exclut page et per_page)
+    filter_args = {
+        'date_debut': date_debut,
+        'date_fin': date_fin,
+        'matricule': matricule,
+        'activite_id': activite_id,
+        'division_id': division_id,
+        'direction_id': direction_id,
+        'departement_id': departement_id,
+        'service_id': service_id,
+        'equipe_id': equipe_id
+    }
+    filter_args = {k: v for k, v in filter_args.items() if v}
 
     return render_template('pointages/liste.html',
                            pointages=pointages,
+                           page=page,
+                           total_pages=total_pages,
+                           per_page=per_page,
+                           filter_args=filter_args,
                            date_debut=date_debut,
                            date_fin=date_fin,
                            matricule=matricule,
-                           activites=activites,
-                           divisions=divisions,
-                           directions=directions,
-                           departements=departements,
-                           services=services,
-                           equipes=equipes,
                            activite_id=activite_id,
                            division_id=division_id,
                            direction_id=direction_id,
                            departement_id=departement_id,
                            service_id=service_id,
-                           equipe_id=equipe_id)
-
+                           equipe_id=equipe_id,
+                           activites=activites,
+                           divisions=divisions,
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes)
+#--------------------------------------------------------------------
+# Pointage rapide (sans sélection de l'agent, juste matricule/badge et type de pointage)
+#--------------------------------------------------------------------
 @app.route('/pointages/rapide', methods=['GET', 'POST'])
 @login_required
 def pointage_rapide():
@@ -1080,4 +1208,904 @@ def api_equipes(service_id):
         c = conn.cursor()
         c.execute("SELECT id, nom_equipe FROM equipes WHERE service_id = ? AND active = 1 ORDER BY nom_equipe", (service_id,))
         return jsonify([{'id': r[0], 'nom': r[1]} for r in c.fetchall()])
+
+# -------------------------------------------------------------------
+# Rapports (présence, absences, retards) – à compléter selon vos besoins
+# -------------------------------------------------------------------
+# (Les routes de rapports sont supposées exister ailleurs. Si ce n'est pas le cas,
+#  vous devrez les ajouter en vous inspirant des classes Tkinter.)
+# -------------------------------------------------------------------
+# Gestion des quarts
+# -------------------------------------------------------------------
+@app.route('/quarts')
+@login_required
+def liste_quarts():
+    quarts = db.get_all_quarts()
+    return render_template('quarts/liste.html', quarts=quarts)
+
+@app.route('/quarts/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_quart():
+    nom = request.form['nom']
+    debut = request.form['heure_debut']
+    fin = request.form['heure_fin']
+    nuit = 1 if 'est_nuit' in request.form else 0
+    description = request.form.get('description')
+    db.add_quart(nom, debut, fin, nuit, None, description)
+    flash(f"Quart '{nom}' ajouté.", "success")
+    return redirect(url_for('liste_quarts'))
+
+@app.route('/quarts/<int:qid>/modifier', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def modifier_quart(qid):
+    quart = db.get_quart(qid)
+    if not quart:
+        flash("Quart non trouvé.", "danger")
+        return redirect(url_for('liste_quarts'))
+    if request.method == 'POST':
+        nom = request.form['nom']
+        heure_debut = request.form['heure_debut']
+        heure_fin = request.form['heure_fin']
+        est_nuit = 'est_nuit' in request.form
+        duree_heures = request.form.get('duree_heures')
+        if duree_heures:
+            duree_heures = float(duree_heures)
+        description = request.form.get('description')
+        couleur = request.form.get('couleur')
+        active = 'active' in request.form
+        db.update_quart(qid, nom, heure_debut, heure_fin, est_nuit, duree_heures, description, couleur, active)
+        flash("Quart modifié.", "success")
+        return redirect(url_for('liste_quarts'))
+    return render_template('quarts/modifier.html', quart=quart)
+
+@app.route('/quarts/<int:qid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_quart(qid):
+    if db.delete_quart(qid):
+        flash("Quart supprimé.", "success")
+    else:
+        flash("Impossible de supprimer : ce quart est utilisé par du personnel.", "danger")
+    return redirect(url_for('liste_quarts'))
+
+# -------------------------------------------------------------------
+# Gestion des congés
+# -------------------------------------------------------------------
+@app.route('/conges')
+@login_required
+def liste_conges():
+    statut = request.args.get('statut', 'Tous')
+    matricule = request.args.get('matricule', '')
+    date_debut = request.args.get('date_debut', '')
+    date_fin = request.args.get('date_fin', '')
+    filters = {}
+    if statut != 'Tous':
+        filters['statut'] = statut
+    if matricule:
+        filters['matricule'] = matricule
+    if date_debut:
+        filters['date_debut'] = date_debut
+    if date_fin:
+        filters['date_fin'] = date_fin
+    conges = db.get_conges(filters)
+    personnel = db.get_personnel()
+    return render_template('conges/liste.html', conges=conges, personnel=personnel,
+                           statut=statut, matricule=matricule,
+                           date_debut=date_debut, date_fin=date_fin)
+
+@app.route('/conges/ajouter', methods=['GET', 'POST'])
+@login_required
+def ajouter_conge():
+    if request.method == 'POST':
+        matricule = request.form['matricule']
+        type_conge = request.form['type_conge']
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        duree = int(request.form['duree'])
+        motif = request.form.get('motif')
+        justificatif = None
+        pers = db.get_personnel_by_matricule(matricule)
+        if not pers:
+            flash("Personnel non trouvé.", "danger")
+            return redirect(url_for('liste_conges'))
+        data = (pers['id'], matricule, type_conge, date_debut, date_fin, duree, motif, justificatif, 'en_attente', date.today().strftime('%Y-%m-%d'))
+        db.add_conge(data)
+        flash("Demande de congé enregistrée.", "success")
+        return redirect(url_for('liste_conges'))
+    personnel = db.get_personnel()
+    return render_template('conges/ajouter.html', personnel=personnel)
+
+@app.route('/conges/<int:cid>/approuver', methods=['POST'])
+@login_required
+@admin_required
+def approuver_conge(cid):
+    db.update_conge_statut(cid, 'approuve', session['username'])
+    flash("Congé approuvé.", "success")
+    return redirect(url_for('liste_conges'))
+
+@app.route('/conges/<int:cid>/refuser', methods=['POST'])
+@login_required
+@admin_required
+def refuser_conge(cid):
+    db.update_conge_statut(cid, 'refuse', session['username'])
+    flash("Congé refusé.", "success")
+    return redirect(url_for('liste_conges'))
+
+# -------------------------------------------------------------------
+# Gestion des heures supplémentaires
+# -------------------------------------------------------------------
+@app.route('/heures_sup')
+@login_required
+def liste_heures_sup():
+    matricule = request.args.get('matricule', '')
+    statut = request.args.get('statut', '')
+    date_debut = request.args.get('date_debut', '')
+    date_fin = request.args.get('date_fin', '')
+    hs_list = db.get_heures_supplementaires(matricule=matricule, statut=statut,
+                                            date_debut=date_debut, date_fin=date_fin)
+    personnel = db.get_personnel()
+    return render_template('heures_sup/liste.html', hs_list=hs_list, personnel=personnel,
+                           matricule=matricule, statut=statut,
+                           date_debut=date_debut, date_fin=date_fin)
+
+@app.route('/heures_sup/ajouter', methods=['GET', 'POST'])
+@login_required
+def ajouter_heure_sup():
+    if request.method == 'POST':
+        matricule = request.form['matricule']
+        date_debut = request.form['date_debut'] + ' ' + request.form['heure_debut']
+        date_fin = request.form['date_fin'] + ' ' + request.form['heure_fin']
+        duree = float(request.form['duree'])
+        type_sup = request.form['type_sup']
+        taux = float(request.form['taux'])
+        motif = request.form.get('motif')
+        pers = db.get_personnel_by_matricule(matricule)
+        if not pers:
+            flash("Personnel non trouvé.", "danger")
+            return redirect(url_for('liste_heures_sup'))
+        db.add_heure_supplementaire(pers['id'], matricule, date_debut, date_fin, duree, type_sup, taux, motif)
+        flash("Heure supplémentaire enregistrée.", "success")
+        return redirect(url_for('liste_heures_sup'))
+    personnel = db.get_personnel()
+    return render_template('heures_sup/ajouter.html', personnel=personnel)
+
+@app.route('/heures_sup/<int:hsid>/approuver', methods=['POST'])
+@login_required
+@admin_required
+def approuver_heure_sup(hsid):
+    if db.update_heure_sup_statut(hsid, 'approuve', session['username']):
+        flash("Heure supplémentaire approuvée.", "success")
+    else:
+        flash("Erreur lors de l'approbation.", "danger")
+    return redirect(url_for('liste_heures_sup'))
+
+# -------------------------------------------------------------------
+# Gestion des jours fériés
+# -------------------------------------------------------------------
+@app.route('/jours_feries')
+@login_required
+def liste_jours_feries():
+    jours = db.get_all_jours_feries()
+    return render_template('jours_feries/liste.html', jours=jours)
+
+@app.route('/jours_feries/ajouter', methods=['POST'])
+@login_required
+@admin_required
+def ajouter_jour_ferie():
+    date_jour = request.form['date_jour']
+    nom = request.form['nom']
+    description = request.form.get('description')
+    db.add_jour_ferie(date_jour, nom, description)
+    flash("Jour férié ajouté.", "success")
+    return redirect(url_for('liste_jours_feries'))
+
+@app.route('/jours_feries/<int:jid>/supprimer', methods=['POST'])
+@login_required
+@admin_required
+def supprimer_jour_ferie(jid):
+    if db.delete_jour_ferie(jid):
+        flash("Jour férié supprimé.", "success")
+    else:
+        flash("Erreur lors de la suppression.", "danger")
+    return redirect(url_for('liste_jours_feries'))
+
+# -------------------------------------------------------------------
+# Gestion des retards cumulés
+# -------------------------------------------------------------------
+@app.route('/retards')
+@login_required
+def liste_retards():
+    mois = request.args.get('mois', datetime.now().strftime('%Y-%m'))
+    retards = db.get_retards_cumules(mois=mois)
+    return render_template('retards/liste.html', retards=retards, mois=mois)
+
+@app.route('/retards/<int:rid>/justifier', methods=['POST'])
+@login_required
+def justifier_retard(rid):
+    justification = request.form.get('justification', '')
+    if db.justifier_retard(rid, justification):
+        flash("Retard justifié.", "success")
+    else:
+        flash("Erreur lors de la justification.", "danger")
+    return redirect(url_for('liste_retards'))
+
+# -------------------------------------------------------------------
+# Styles PDF personnalisés (défini avant son utilisation)
+# -------------------------------------------------------------------
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+
+def get_pdf_styles():
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CustomTitle',
+        parent=styles['Title'],
+        fontSize=16,
+        textColor=colors.HexColor('#2c3e50'),
+        alignment=1,
+        spaceAfter=20
+    ))
+    styles.add(ParagraphStyle(
+        name='CustomHeader',
+        parent=styles['Normal'],
+        fontSize=12,
+        textColor=colors.white,
+        alignment=1,
+        backColor=colors.HexColor('#3498db')
+    ))
+    return styles
+
+# -------------------------------------------------------------------
+# Rapports
+# -------------------------------------------------------------------
+def jours_ouvres(debut, fin):
+    jour = debut
+    while jour <= fin:
+        if not db.est_weekend(jour) and not db.est_jour_ferie(jour):
+            yield jour
+        jour += timedelta(days=1)
+
+#-------------------------------------------------------------------
+# Rapport de présence
+#-------------------------------------------------------------------
+@app.route('/rapports/presence', methods=['GET', 'POST'])
+@login_required
+def rapport_presence():
+    if request.method == 'POST':
+        date_debut = request.form.get('date_debut')
+        date_fin = request.form.get('date_fin')
+        matricule = request.form.get('matricule', '').strip()
+        direction = request.form.get('direction')
+        departement = request.form.get('departement')
+        service = request.form.get('service')
+        equipe = request.form.get('equipe')
+        type_rapport = request.form.get('type_rapport', 'resume')
+        
+        # Stocker les filtres en session
+        session['presence_filters'] = {
+            'date_debut': date_debut,
+            'date_fin': date_fin,
+            'matricule': matricule,
+            'direction': direction,
+            'departement': departement,
+            'service': service,
+            'equipe': equipe,
+            'type_rapport': type_rapport
+        }
+    else:
+        filters = session.get('presence_filters', {})
+        date_debut = filters.get('date_debut', date.today().replace(day=1).strftime('%Y-%m-%d'))
+        date_fin = filters.get('date_fin', date.today().strftime('%Y-%m-%d'))
+        matricule = filters.get('matricule', '')
+        direction = filters.get('direction', '')
+        departement = filters.get('departement', '')
+        service = filters.get('service', '')
+        equipe = filters.get('equipe', '')
+        type_rapport = filters.get('type_rapport', 'resume')
+    
+    filter_args = {
+        'date_debut': date_debut, 'date_fin': date_fin, 'matricule': matricule,
+        'direction': direction, 'departement': departement,
+        'service': service, 'equipe': equipe, 'type_rapport': type_rapport
+    }
+    filter_args = {k: v for k, v in filter_args.items() if v}
+    
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    if type_rapport == 'resume':
+        resultats = db.get_presence_report(
+            date_debut=date_debut, date_fin=date_fin, matricule=matricule,
+            direction_nom=direction, departement_nom=departement,
+            service_nom=service, equipe_nom=equipe, type_rapport='resume'
+        )
+        total = len(resultats)
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        offset = (page - 1) * per_page
+        resultats_page = resultats[offset:offset+per_page]
+    else:
+        details = db.get_presence_report(
+            date_debut=date_debut, date_fin=date_fin, matricule=matricule,
+            direction_nom=direction, departement_nom=departement,
+            service_nom=service, equipe_nom=equipe, type_rapport='detail'
+        )
+        total = len(details)
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        offset = (page - 1) * per_page
+        resultats_page = details[offset:offset+per_page]
+    
+    # Charger les listes pour les filtres
+    directions = db.get_all_directions()
+    departements = db.get_all_departements()
+    services = db.get_all_services()
+    equipes = db.get_all_equipes()
+    
+    if type_rapport == 'resume':
+        return render_template('rapports/presence_resultats_resume.html',
+                               resultats=resultats_page, page=page,
+                               total_pages=total_pages, per_page=per_page,
+                               filter_args=filter_args, date_debut=date_debut,
+                               date_fin=date_fin, matricule=matricule,
+                               direction=direction, departement=departement,
+                               service=service, equipe=equipe,
+                               type_rapport=type_rapport,
+                               directions=directions, departements=departements,
+                               services=services, equipes=equipes)
+    else:
+        return render_template('rapports/presence_resultats_detail.html',
+                               details=resultats_page, page=page,
+                               total_pages=total_pages, per_page=per_page,
+                               filter_args=filter_args, date_debut=date_debut,
+                               date_fin=date_fin, matricule=matricule,
+                               direction=direction, departement=departement,
+                               service=service, equipe=equipe,
+                               type_rapport=type_rapport,
+                               directions=directions, departements=departements,
+                               services=services, equipes=equipes)
+#-------------------------------------------------------------------
+# Rapport d'absences
+#-------------------------------------------------------------------
+@app.route('/rapports/absences', methods=['GET', 'POST'])
+@login_required
+def rapport_absences():
+    if request.method == 'POST':
+        date_debut = request.form['date_debut']
+        date_fin = request.form['date_fin']
+        matricule = request.form.get('matricule', '').strip()
+        direction = request.form.get('direction')
+        departement = request.form.get('departement')
+        service = request.form.get('service')
+        equipe = request.form.get('equipe')
+        type_rapport = request.form.get('type_rapport', 'resume')
+        
+        if type_rapport == 'resume':
+            resultats = db.get_absence_report(
+                date_debut=date_debut,
+                date_fin=date_fin,
+                matricule=matricule,
+                direction_nom=direction,
+                departement_nom=departement,
+                service_nom=service,
+                equipe_nom=equipe,
+                type_rapport='resume'
+            )
+            # Pagination
+            page = request.args.get('page', 1, type=int)
+            per_page = request.args.get('per_page', 20, type=int)
+            total = len(resultats)
+            total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+            offset = (page - 1) * per_page
+            resultats_page = resultats[offset:offset+per_page]
+            return render_template('rapports/absences_resultats_resume.html',
+                                   resultats=resultats_page,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin,
+                                   page=page,
+                                   total_pages=total_pages,
+                                   per_page=per_page,
+                                   matricule=matricule,
+                                   direction=direction,
+                                   departement=departement,
+                                   service=service,
+                                   equipe=equipe)
+        else:
+            details = db.get_absence_report(
+                date_debut=date_debut,
+                date_fin=date_fin,
+                matricule=matricule,
+                direction_nom=direction,
+                departement_nom=departement,
+                service_nom=service,
+                equipe_nom=equipe,
+                type_rapport='detail'
+            )
+            # Pagination
+            page = request.args.get('page', 1, type=int)
+            per_page = request.args.get('per_page', 20, type=int)
+            total = len(details)
+            total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+            offset = (page - 1) * per_page
+            details_page = details[offset:offset+per_page]
+            return render_template('rapports/absences_resultats_detail.html',
+                                   details=details_page,
+                                   date_debut=date_debut,
+                                   date_fin=date_fin,
+                                   page=page,
+                                   total_pages=total_pages,
+                                   per_page=per_page,
+                                   matricule=matricule,
+                                   direction=direction,
+                                   departement=departement,
+                                   service=service,
+                                   equipe=equipe)
+    
+    # GET : formulaire de filtres
+    with db.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT dir.nom_direction FROM directions dir WHERE dir.active = 1 ORDER BY dir.nom_direction")
+        directions = [row[0] for row in c.fetchall()]
+        c.execute("SELECT DISTINCT dep.nom_departement FROM departements dep WHERE dep.active = 1 ORDER BY dep.nom_departement")
+        departements = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT s.nom_service FROM services s WHERE s.active = 1 ORDER BY s.nom_service")
+        services = [r[0] for r in c.fetchall()]
+        c.execute("SELECT DISTINCT e.nom_equipe FROM equipes e WHERE e.active = 1 ORDER BY e.nom_equipe")
+        equipes = [r[0] for r in c.fetchall()]
+    now = datetime.now()
+    return render_template('rapports/absences_filtres.html',
+                           directions=directions,
+                           departements=departements,
+                           services=services,
+                           equipes=equipes,
+                           now=now)
+
+#-------------------------------------------------------------------
+# Rapport de retards cumulés
+#-------------------------------------------------------------------
+@app.route('/rapports/retards', methods=['GET', 'POST'])
+@login_required
+def rapport_retards():
+    # Récupération des filtres (POST pour soumission, GET pour pagination)
+    if request.method == 'POST':
+        date_debut = request.form.get('date_debut', '')
+        date_fin = request.form.get('date_fin', '')
+        matricule = request.form.get('matricule', '').strip()
+        direction = request.form.get('direction', '')
+        departement = request.form.get('departement', '')
+        service = request.form.get('service', '')
+        equipe = request.form.get('equipe', '')
+        type_rapport = request.form.get('type_rapport', 'resume')
+        # Stocker en session pour persistance
+        session['retard_filters'] = {
+            'date_debut': date_debut,
+            'date_fin': date_fin,
+            'matricule': matricule,
+            'direction': direction,
+            'departement': departement,
+            'service': service,
+            'equipe': equipe,
+            'type_rapport': type_rapport
+        }
+    else:
+        # GET: récupérer depuis la session
+        filters = session.get('retard_filters', {})
+        date_debut = filters.get('date_debut', '')
+        date_fin = filters.get('date_fin', '')
+        matricule = filters.get('matricule', '')
+        direction = filters.get('direction', '')
+        departement = filters.get('departement', '')
+        service = filters.get('service', '')
+        equipe = filters.get('equipe', '')
+        type_rapport = filters.get('type_rapport', 'resume')
+    
+    # Valeurs par défaut si vides
+    if not date_debut:
+        date_debut = date.today().replace(day=1).strftime('%Y-%m-%d')
+    if not date_fin:
+        date_fin = date.today().strftime('%Y-%m-%d')
+    
+    # Construction des filtres pour la pagination
+    filter_args = {
+        'date_debut': date_debut,
+        'date_fin': date_fin,
+        'matricule': matricule,
+        'direction': direction,
+        'departement': departement,
+        'service': service,
+        'equipe': equipe,
+        'type_rapport': type_rapport
+    }
+    filter_args = {k: v for k, v in filter_args.items() if v}
+    
+    # Pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    if type_rapport == 'resume':
+        resultats = db.get_retard_report(
+            date_debut=date_debut, date_fin=date_fin,
+            matricule=matricule, direction_nom=direction if direction else None,
+            departement_nom=departement if departement else None,
+            service_nom=service if service else None,
+            equipe_nom=equipe if equipe else None,
+            type_rapport='resume'
+        )
+        total = len(resultats)
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        offset = (page - 1) * per_page
+        resultats_page = resultats[offset:offset+per_page]
+        
+        # Charger les listes pour les filtres
+        directions = db.get_all_directions()
+        departements = db.get_all_departements()
+        services = db.get_all_services()
+        equipes = db.get_all_equipes()
+        
+        return render_template('rapports/retards_resultats_resume.html',
+                               resultats=resultats_page, page=page,
+                               total_pages=total_pages, per_page=per_page,
+                               filter_args=filter_args,
+                               date_debut=date_debut, date_fin=date_fin,
+                               matricule=matricule, direction=direction,
+                               departement=departement, service=service,
+                               equipe=equipe, type_rapport=type_rapport,
+                               directions=directions, departements=departements,
+                               services=services, equipes=equipes)
+    else:
+        details = db.get_retard_report(
+            date_debut=date_debut, date_fin=date_fin,
+            matricule=matricule, direction_nom=direction if direction else None,
+            departement_nom=departement if departement else None,
+            service_nom=service if service else None,
+            equipe_nom=equipe if equipe else None,
+            type_rapport='detail'
+        )
+        total = len(details)
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        offset = (page - 1) * per_page
+        details_page = details[offset:offset+per_page]
+        
+        directions = db.get_all_directions()
+        departements = db.get_all_departements()
+        services = db.get_all_services()
+        equipes = db.get_all_equipes()
+        
+        return render_template('rapports/retards_resultats_detail.html',
+                               details=details_page, page=page,
+                               total_pages=total_pages, per_page=per_page,
+                               filter_args=filter_args,
+                               date_debut=date_debut, date_fin=date_fin,
+                               matricule=matricule, direction=direction,
+                               departement=departement, service=service,
+                               equipe=equipe, type_rapport=type_rapport,
+                               directions=directions, departements=departements,
+                               services=services, equipes=equipes)
+        
+        
+@app.route('/rapports/pdf', methods=['POST'])
+@login_required
+def exporter_rapport_pdf():
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    import json, os, tempfile
+
+    data = request.get_json()
+    titre = data.get('titre', 'Rapport')
+    colonnes = data.get('colonnes', [])
+    lignes = data.get('lignes', [])
+    sous_titre = data.get('sous_titre', '')
+    if not lignes:
+        return jsonify({'success': False, 'message': 'Aucune donnée'}), 400
+    pagesize = landscape(A4) if len(colonnes) > 6 else A4
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+        pdf_path = tmp.name
+    doc = SimpleDocTemplate(pdf_path, pagesize=pagesize,
+                            rightMargin=1.5*cm, leftMargin=1.5*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = get_pdf_styles()
+    elements = []
+    logo_path = os.path.join('static', 'images', 'logo.png')
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=3*cm, height=3*cm)
+        elements.append(logo)
+        elements.append(Spacer(1, 0.5*cm))
+    elements.append(Paragraph(titre, styles['CustomTitle']))
+    if sous_titre:
+        elements.append(Paragraph(sous_titre, styles['Normal']))
+    elements.append(Spacer(1, 0.5*cm))
+    data_table = [colonnes] + lignes
+    table = Table(data_table, repeatRows=1, hAlign='CENTER')
+    style = TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498db')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 11),
+        ('BOTTOMPADDING', (0,0), (-1,0), 10),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,1), (-1,-1), 9),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ])
+    for i, col in enumerate(colonnes):
+        if any(k in col.lower() for k in ('min', '€', 'id', 'nb', 'total', 'pénalité', 'jours')):
+            style.add('ALIGN', (i,1), (i,-1), 'RIGHT')
+        else:
+            style.add('ALIGN', (i,1), (i,-1), 'LEFT')
+    table.setStyle(style)
+    elements.append(table)
+    from datetime import datetime
+    user = session.get('prenom', '') + ' ' + session.get('nom', '')
+    def add_footer(canvas, doc):
+        canvas.saveState()
+        footer = f"Généré le {datetime.now().strftime('%d/%m/%Y %H:%M')} par {user} - Page {doc.page}"
+        canvas.setFont('Helvetica', 8)
+        canvas.drawCentredString(doc.pagesize[0]/2, 1.2*cm, footer)
+        canvas.restoreState()
+    doc.build(elements, onFirstPage=add_footer, onLaterPages=add_footer)
+    return send_file(pdf_path, as_attachment=False, download_name="rapport.pdf")
+
+
+@app.route('/rapports/retards/export_pdf', methods=['POST'])
+@login_required
+def exporter_retards_pdf():
+    # Récupérer les filtres depuis le formulaire POST
+    date_debut = request.form.get('date_debut')
+    date_fin = request.form.get('date_fin')
+    matricule = request.form.get('matricule', '').strip()
+    direction = request.form.get('direction')
+    departement = request.form.get('departement')
+    service = request.form.get('service')
+    equipe = request.form.get('equipe')
+    type_rapport = request.form.get('type_rapport', 'resume')
+    
+    # Valeurs par défaut si vides
+    if not date_debut:
+        date_debut = date.today().replace(day=1).strftime('%Y-%m-%d')
+    if not date_fin:
+        date_fin = date.today().strftime('%Y-%m-%d')
+    
+    # Récupérer TOUTES les données (sans pagination)
+    if type_rapport == 'resume':
+        resultats = db.get_retard_report(
+            date_debut=date_debut, date_fin=date_fin,
+            matricule=matricule,
+            direction_nom=direction if direction else None,
+            departement_nom=departement if departement else None,
+            service_nom=service if service else None,
+            equipe_nom=equipe if equipe else None,
+            type_rapport='resume'
+        )
+        if not resultats:
+            flash("Aucune donnée à exporter", "warning")
+            return redirect(url_for('rapport_retards'))
+        
+        df = pd.DataFrame(resultats)
+        # Renommer les colonnes
+        colonnes = ['matricule', 'nom', 'prenom', 'direction', 'nb_retards', 'total_min_retard', 'nb_departs_anticipes', 'total_min_anticipe', 'penalite']
+        df = df[colonnes]
+        df.columns = ['Matricule', 'Nom', 'Prénom', 'Direction', 'Nb retards', 'Total min retard', 'Nb départs anticipés', 'Total min anticipé', 'Pénalité (€)']
+        titre = f"Rapport des retards - Résumé du {date_debut} au {date_fin}"
+        orientation = 'landscape' if len(df) > 10 else 'portrait'
+    else:
+        details = db.get_retard_report(
+            date_debut=date_debut, date_fin=date_fin,
+            matricule=matricule,
+            direction_nom=direction if direction else None,
+            departement_nom=departement if departement else None,
+            service_nom=service if service else None,
+            equipe_nom=equipe if equipe else None,
+            type_rapport='detail'
+        )
+        if not details:
+            flash("Aucune donnée à exporter", "warning")
+            return redirect(url_for('rapport_retards'))
+        
+        df = pd.DataFrame(details)
+        colonnes = ['date', 'heure', 'type', 'matricule', 'nom', 'prenom', 'minutes', 'direction', 'departement', 'service', 'equipe']
+        df = df[colonnes]
+        df.columns = ['Date', 'Heure', 'Type', 'Matricule', 'Nom', 'Prénom', 'Minutes', 'Direction', 'Département', 'Service', 'Équipe']
+        titre = f"Rapport des retards - Détail du {date_debut} au {date_fin}"
+        orientation = 'landscape' if len(df) > 15 else 'portrait'
+    
+    # Générer le PDF
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+        pdf_path = tmp.name
+    dataframe_to_pdf(df, titre, pdf_path, orientation=orientation)
+    
+    with open(pdf_path, 'rb') as f:
+        pdf_data = f.read()
+    os.unlink(pdf_path)
+    
+    response = make_response(pdf_data)
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = f'attachment; filename=rapport_retards_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+    return response
+
+def get_pdf_styles():
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name='CustomTitle',
+                              parent=styles['Title'],
+                              fontSize=16,
+                              textColor=colors.HexColor('#2c3e50'),
+                              alignment=1,
+                              spaceAfter=20))
+    return styles
+
+# -------------------------------------------------------------------
+# Gestion des utilisateurs (admin)
+# -------------------------------------------------------------------
+@app.route('/utilisateurs')
+@login_required
+@admin_required
+def liste_utilisateurs():
+    utilisateurs = db.get_all_users()
+    return render_template('utilisateurs/liste.html', utilisateurs=utilisateurs)
+
+@app.route('/utilisateurs/ajouter', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def ajouter_utilisateur():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        nom = request.form['nom']
+        prenom = request.form['prenom']
+        email = request.form.get('email')
+        role = request.form['role']
+        try:
+            db.create_user(username, password, nom, prenom, email, role)
+            flash("Utilisateur créé avec succès.", "success")
+            return redirect(url_for('liste_utilisateurs'))
+        except Exception as e:
+            flash(f"Erreur : {e}", "danger")
+    return render_template('utilisateurs/ajouter.html')
+
+@app.route('/utilisateurs/<int:uid>/desactiver', methods=['POST'])
+@login_required
+@admin_required
+def desactiver_utilisateur(uid):
+    if uid == session['user_id']:
+        flash("Vous ne pouvez pas désactiver votre propre compte.", "danger")
+    else:
+        db.update_user(uid, is_active=0)
+        flash("Utilisateur désactivé.", "success")
+    return redirect(url_for('liste_utilisateurs'))
+
+# -------------------------------------------------------------------
+# Paramètres
+# -------------------------------------------------------------------
+@app.route('/parametres/tolerances', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_tolerances():
+    if request.method == 'POST':
+        db.set_parametre('tolerance_retard_globale', request.form['tolerance_retard'])
+        db.set_parametre('tolerance_depart_anticipe', request.form['tolerance_depart'])
+        flash("Paramètres mis à jour.", "success")
+        return redirect(url_for('parametres_tolerances'))
+    tolerance_retard = db.get_parametre('tolerance_retard_globale', '10')
+    tolerance_depart = db.get_parametre('tolerance_depart_anticipe', '10')
+    return render_template('parametres/tolerances.html',
+                           tolerance_retard=tolerance_retard,
+                           tolerance_depart=tolerance_depart)
+
+@app.route('/parametres/conservation', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_conservation():
+    if request.method == 'POST':
+        if 'purge' in request.form:
+            resultats = db.purger_anciennes_donnees()
+            flash(f"Purge effectuée : {resultats['pointages']} pointages, {resultats['retards']} retards, {resultats['logs']} logs supprimés.", "success")
+        else:
+            nouvelle_duree = request.form['duree_conservation']
+            db.set_parametre('duree_conservation_mois', nouvelle_duree)
+            flash(f"Délai de conservation modifié à {nouvelle_duree} mois.", "success")
+        return redirect(url_for('parametres_conservation'))
+    duree = db.get_parametre('duree_conservation_mois', '12')
+    return render_template('parametres/conservation.html', duree=duree)
+
+@app.route('/parametres/weekend', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_weekend():
+    if request.method == 'POST':
+        jours = ','.join(request.form.getlist('jours'))
+        db.set_parametre('jours_weekend', jours)
+        flash("Configuration des jours de weekend enregistrée.", "success")
+        return redirect(url_for('parametres_weekend'))
+    actuel = db.get_parametre('jours_weekend', '5,6')
+    jours_selectionnes = [int(x) for x in actuel.split(',') if x.strip()]
+    return render_template('parametres/weekend.html', jours_selectionnes=jours_selectionnes)
+
+# -------------------------------------------------------------------
+# API JSON pour badges
+# -------------------------------------------------------------------
+@app.route('/api/pointage', methods=['POST'])
+def api_pointage():
+    data = request.json
+    identifiant = data.get('matricule') or data.get('badge_id')
+    type_pt = data.get('type', 'entrée')
+    pers = db.get_personnel_by_matricule(identifiant) or db.get_personnel_by_badge(identifiant)
+    if not pers:
+        return jsonify({'success': False, 'message': 'Personnel non trouvé'}), 404
+    pid, msg = db.add_pointage_avance(
+        matricule=pers['matricule'],
+        type_pointage=type_pt,
+        mode='api',
+        user_id=None
+    )
+    if pid:
+        return jsonify({'success': True, 'message': msg})
+    else:
+        return jsonify({'success': False, 'message': msg}), 400
+
+# -------------------------------------------------------------------
+# Paramètres des horaires globaux
+# -------------------------------------------------------------------
+@app.route('/parametres/horaires_globaux', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def parametres_horaires_globaux():
+    if request.method == 'POST':
+        db.set_parametre('heure_entree_globale', request.form['heure_entree_globale'])
+        db.set_parametre('heure_sortie_globale', request.form['heure_sortie_globale'])
+        db.set_parametre('utiliser_horaires_globaux', '1' if 'utiliser_horaires_globaux' in request.form else '0')
+        flash("Horaires globaux mis à jour.", "success")
+        return redirect(url_for('parametres_horaires_globaux'))
+    heure_entree = db.get_parametre('heure_entree_globale', '08:00:00')
+    heure_sortie = db.get_parametre('heure_sortie_globale', '17:00:00')
+    utiliser_globaux = db.get_parametre('utiliser_horaires_globaux', '0') == '1'
+    return render_template('parametres/horaires_globaux.html',
+                           heure_entree=heure_entree,
+                           heure_sortie=heure_sortie,
+                           utiliser_globaux=utiliser_globaux)
+
+# -------------------------------------------------------------------
+# Route pour servir les photos des agents
+# -------------------------------------------------------------------
+@app.route('/photos/<path:filename>')
+@login_required
+def servir_photo(filename):
+    dossier_photos = os.path.join('pointage_data', 'photos')
+    return send_from_directory(dossier_photos, filename)
+
+#--------------------------------------------------------------------
+# Fonction de pagination générique
+#--------------------------------------------------------------------
+
+def paginate(query, page, per_page=20, params=None):
+    """Exécute une requête avec pagination.
+       Retourne (items, total, page, total_pages)."""
+    if params is None:
+        params = []
+    # Compter le total
+    count_query = f"SELECT COUNT(*) FROM ({query}) AS sub"
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+    # Appliquer LIMIT et OFFSET
+    offset = (page - 1) * per_page
+    paginated_query = query + " LIMIT ? OFFSET ?"
+    params_pag = params + [per_page, offset]
+    cursor.execute(paginated_query, params_pag)
+    items = [dict(row) for row in cursor.fetchall()]
+    return items, total, page, total_pages
+
+# -------------------------------------------------------------------
+# Lancement
+# -------------------------------------------------------------------
+if __name__ == '__main__':
+    app.run(debug=True, host='127.0.0.1', port=5000)
+
 
