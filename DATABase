@@ -12,6 +12,7 @@ import hashlib
 from datetime import datetime, date, timedelta
 import pandas as pd
 
+
 class Database:
 
     def __init__(self):
@@ -690,262 +691,270 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM types_personnel ORDER BY nom_type")
             return [dict(row) for row in cursor.fetchall()]
+    #-------------------------------------------------------------
+    # Gestion des types de personnel
+    #-------------------------------------------------------------
+    
+#------------------------------------------------------------
+# Filtrage du personnel par structure
+#------------------------------------------------------------
 
-    # ------------------------------------------------------------
-    # Méthodes get_* pour la hiérarchie
-    # ------------------------------------------------------------
-    def get_direction(self, direction_id):
+#------------------------------------------------------------
+# Filtrage du personnel par Activité
+#------------------------------------------------------------
+    def get_personnel_par_activite(self, activite_id):
+        """Retourne la liste du personnel pour une activité donnée avec toutes les infos hiérarchiques."""
+        query = """
+            SELECT 
+                p.id, p.matricule, p.badge_id, p.nom, p.prenom, 
+                p.type_person, p.fonction, p.statut,
+                p.date_embauche, p.date_naissance,
+                p.adresse, p.telephone, p.email,
+                p.concerne_pointage, p.type_quart,
+                p.heure_entree_theorique, p.heure_sortie_theorique,
+                p.tolerance_entree, p.tolerance_sortie,
+                a.nom_activite as activite_nom,
+                d.nom_division as division_nom,
+                dir.nom_direction as direction_nom,
+                dep.nom_departement as departement_nom,
+                s.nom_service as service_nom,
+                e.nom_equipe as equipe_nom,
+                q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE a.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM directions WHERE id = ?", (direction_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute(query, (activite_id,))
+            rows = c.fetchall()
+            if not rows:
+                return []
+            return [dict(row) for row in rows]
+#------------------------------------------------------------
+# Filtrage du personnel par Division
+#------------------------------------------------------------
+    def get_personnel_par_division(self, division_id):
+        """Retourne la liste du personnel pour une division donnée."""
+        query = """
+            SELECT p.*,
+                   a.nom_activite as activite_nom,
+                   d.nom_division as division_nom,
+                   dir.nom_direction as direction_nom,
+                   dep.nom_departement as departement_nom,
+                   s.nom_service as service_nom,
+                   e.nom_equipe as equipe_nom,
+                   q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE d.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, (division_id,))
+            return [dict(row) for row in c.fetchall()]
 
-    def get_division(self, division_id):
+    def get_personnel_par_direction(self, direction_id):
+        """Retourne la liste du personnel pour une direction donnée."""
+        query = """
+            SELECT p.*,
+                   a.nom_activite as activite_nom,
+                   d.nom_division as division_nom,
+                   dir.nom_direction as direction_nom,
+                   dep.nom_departement as departement_nom,
+                   s.nom_service as service_nom,
+                   e.nom_equipe as equipe_nom,
+                   q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE dir.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM divisions WHERE id = ?", (division_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute(query, (direction_id,))
+            return [dict(row) for row in c.fetchall()]
 
-    def get_activite(self, activite_id):
+    def get_personnel_par_departement(self, departement_id):
+        """Retourne la liste du personnel pour un département donné."""
+        query = """
+            SELECT p.*,
+                  a.nom_activite as activite_nom,
+                  d.nom_division as division_nom,
+                  dir.nom_direction as direction_nom,
+                  dep.nom_departement as departement_nom,
+                  s.nom_service as service_nom,
+                  e.nom_equipe as equipe_nom,
+                  q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE dep.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM activites WHERE id = ?", (activite_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute(query, (departement_id,))
+            return [dict(row) for row in c.fetchall()]
 
-    def get_departement(self, departement_id):
+    def get_personnel_par_service(self, service_id):
+        """Retourne la liste du personnel pour un service donné."""
+        query = """
+            SELECT p.*,
+                  a.nom_activite as activite_nom,
+                  d.nom_division as division_nom,
+                  dir.nom_direction as direction_nom,
+                  dep.nom_departement as departement_nom,
+                  s.nom_service as service_nom,
+                  e.nom_equipe as equipe_nom,
+                  q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE s.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM departements WHERE id = ?", (departement_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute(query, (service_id,))
+            return [dict(row) for row in c.fetchall()]
 
-    def get_service(self, service_id):
+    def get_personnel_par_equipe(self, equipe_id):
+        """Retourne la liste du personnel pour une équipe donnée."""
+        query = """
+            SELECT p.*,
+                  a.nom_activite as activite_nom,
+                  d.nom_division as division_nom,
+                  dir.nom_direction as direction_nom,
+                  dep.nom_departement as departement_nom,
+                  s.nom_service as service_nom,
+                  e.nom_equipe as equipe_nom,
+                  q.nom_quart as quart_nom
+            FROM personnel p
+            LEFT JOIN activites a ON p.activite_id = a.id
+            LEFT JOIN divisions d ON p.division_id = d.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            LEFT JOIN quarts_travail q ON p.quart_id = q.id
+            WHERE e.id = ? AND p.statut = 'actif'
+            ORDER BY p.nom, p.prenom
+        """
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM services WHERE id = ?", (service_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute(query, (equipe_id,))
+            return [dict(row) for row in c.fetchall()]
 
-    def get_equipe(self, equipe_id):
+    def get_nom_activite(self, activite_id):
+        """Retourne le nom d'une activité."""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM equipes WHERE id = ?", (equipe_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            c = conn.cursor()
+            c.execute("SELECT nom_activite FROM activites WHERE id = ?", (activite_id,))
+            row = c.fetchone()
+            return row['nom_activite'] if row else None
+
+    def get_nom_division(self, division_id):
+        """Retourne le nom d'une division."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nom_division FROM divisions WHERE id = ?", (division_id,))
+            row = c.fetchone()
+            return row['nom_division'] if row else None
+
+    def get_nom_direction(self, direction_id):
+        """Retourne le nom d'une direction."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nom_direction FROM directions WHERE id = ?", (direction_id,))
+            row = c.fetchone()
+            return row['nom_direction'] if row else None
+
+    def get_nom_departement(self, departement_id):
+        """Retourne le nom d'un département."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nom_departement FROM departements WHERE id = ?", (departement_id,))
+            row = c.fetchone()
+            return row['nom_departement'] if row else None
+
+    def get_nom_service(self, service_id):
+        """Retourne le nom d'un service."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nom_service FROM services WHERE id = ?", (service_id,))
+            row = c.fetchone()
+            return row['nom_service'] if row else None
+
+    def get_nom_equipe(self, equipe_id):
+        """Retourne le nom d'une équipe."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nom_equipe FROM equipes WHERE id = ?", (equipe_id,))
+            row = c.fetchone()
+            return row['nom_equipe'] if row else None
 
     # ------------------------------------------------------------
     # Importation de fichier personnel
     # ------------------------------------------------------------
-    def import_personnel_from_file(self, filepath):
-        import pandas as pd
-        import os
-
-        results = {'total': 0, 'importes': 0, 'mis_a_jour': 0, 'erreurs': 0, 'details': []}
-        try:
-            if not os.path.exists(filepath):
-                raise Exception("Fichier non trouvé")
-            if filepath.lower().endswith('.csv'):
-                df = pd.read_csv(filepath, encoding='utf-8')
-            else:
-                df = pd.read_excel(filepath)
-            results['total'] = len(df)
-
-            df.columns = df.columns.str.lower().str.strip()
-
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Récupérer des IDs par défaut
-                cursor.execute("SELECT id FROM directions LIMIT 1")
-                row = cursor.fetchone()
-                default_direction_id = row[0] if row else None
-                if default_direction_id is None:
-                    cursor.execute("INSERT INTO directions (nom_direction) VALUES ('Par défaut')")
-                    default_direction_id = cursor.lastrowid
-
-                cursor.execute("SELECT id FROM activites LIMIT 1")
-                row = cursor.fetchone()
-                default_activite_id = row[0] if row else None
-                if default_activite_id is None:
-                    cursor.execute("INSERT INTO activites (nom_activite) VALUES ('Par défaut')")
-                    default_activite_id = cursor.lastrowid
-
-                cursor.execute("SELECT id FROM divisions LIMIT 1")
-                row = cursor.fetchone()
-                default_division_id = row[0] if row else None
-                if default_division_id is None:
-                    cursor.execute("INSERT INTO divisions (nom_division) VALUES ('Par défaut')")
-                    default_division_id = cursor.lastrowid
-
-                cursor.execute("SELECT id FROM quarts_travail LIMIT 1")
-                row = cursor.fetchone()
-                default_quart_id = row[0] if row else None
-                if default_quart_id is None:
-                    cursor.execute("INSERT INTO quarts_travail (nom_quart, heure_debut, heure_fin) VALUES ('Jour par défaut', '08:00:00', '17:00:00')")
-                    default_quart_id = cursor.lastrowid
-
-                conn.commit()
-
-                for idx, row in df.iterrows():
-                    try:
-                        matricule = str(row.get('matricule', '')).strip()
-                        if not matricule:
-                            results['erreurs'] += 1
-                            results['details'].append(f"Ligne {idx+2}: matricule vide")
-                            continue
-
-                        badge_id = row.get('badge_id') if pd.notna(row.get('badge_id')) else None
-                        nom = row.get('nom') if pd.notna(row.get('nom')) else ''
-                        prenom = row.get('prenom') if pd.notna(row.get('prenom')) else ''
-                        type_person = row.get('type_person') if pd.notna(row.get('type_person')) else 'cadre'
-                        fonction = row.get('fonction') if pd.notna(row.get('fonction')) else ''
-                        date_embauche = row.get('date_embauche') if pd.notna(row.get('date_embauche')) else None
-                        date_naissance = row.get('date_naissance') if pd.notna(row.get('date_naissance')) else None
-                        adresse = row.get('adresse') if pd.notna(row.get('adresse')) else None
-                        telephone = row.get('telephone') if pd.notna(row.get('telephone')) else None
-                        email = row.get('email') if pd.notna(row.get('email')) else None
-                        statut = row.get('statut') if pd.notna(row.get('statut')) else 'actif'
-                        concerne_pointage = 1 if (row.get('concerne_pointage') in [1, '1', 'oui', 'Oui', True]) else 0
-                        type_quart = row.get('type_quart') if pd.notna(row.get('type_quart')) else 'jour'
-                        heure_entree = row.get('heure_entree_theorique') if pd.notna(row.get('heure_entree_theorique')) else '08:00:00'
-                        heure_sortie = row.get('heure_sortie_theorique') if pd.notna(row.get('heure_sortie_theorique')) else '17:00:00'
-                        tolerance_entree = int(row.get('tolerance_entree', 0)) if pd.notna(row.get('tolerance_entree')) else 0
-                        tolerance_sortie = int(row.get('tolerance_sortie', 0)) if pd.notna(row.get('tolerance_sortie')) else 0
-
-                        # Recherche des IDs
-                        activite_id = None
-                        if 'activite' in row and pd.notna(row['activite']):
-                            nom_act = row['activite'].strip()
-                            cursor.execute("SELECT id FROM activites WHERE nom_activite = ?", (nom_act,))
-                            res = cursor.fetchone()
-                            if res:
-                                activite_id = res[0]
-                        if activite_id is None:
-                            activite_id = default_activite_id
-
-                        division_id = None
-                        if 'division' in row and pd.notna(row['division']):
-                            nom_div = row['division'].strip()
-                            cursor.execute("SELECT id FROM divisions WHERE nom_division = ?", (nom_div,))
-                            res = cursor.fetchone()
-                            if res:
-                                division_id = res[0]
-                        if division_id is None:
-                            division_id = default_division_id
-
-                        direction_id = None
-                        if 'direction' in row and pd.notna(row['direction']):
-                            nom_dir = row['direction'].strip()
-                            cursor.execute("SELECT id FROM directions WHERE nom_direction = ?", (nom_dir,))
-                            res = cursor.fetchone()
-                            if res:
-                                direction_id = res[0]
-                        if direction_id is None:
-                            direction_id = default_direction_id
-
-                        departement_id = None
-                        if 'departement' in row and pd.notna(row['departement']):
-                            nom_dep = row['departement'].strip()
-                            cursor.execute("SELECT id FROM departements WHERE nom_departement = ?", (nom_dep,))
-                            res = cursor.fetchone()
-                            if res:
-                                departement_id = res[0]
-
-                        service_id = None
-                        if 'service' in row and pd.notna(row['service']):
-                            nom_serv = row['service'].strip()
-                            cursor.execute("SELECT id FROM services WHERE nom_service = ?", (nom_serv,))
-                            res = cursor.fetchone()
-                            if res:
-                                service_id = res[0]
-
-                        equipe_id = None
-                        if 'equipe' in row and pd.notna(row['equipe']):
-                            nom_eq = row['equipe'].strip()
-                            cursor.execute("SELECT id FROM equipes WHERE nom_equipe = ?", (nom_eq,))
-                            res = cursor.fetchone()
-                            if res:
-                                equipe_id = res[0]
-
-                        quart_id = None
-                        if 'quart' in row and pd.notna(row['quart']):
-                            nom_quart = row['quart'].strip()
-                            cursor.execute("SELECT id FROM quarts_travail WHERE nom_quart = ?", (nom_quart,))
-                            res = cursor.fetchone()
-                            if res:
-                                quart_id = res[0]
-                        if quart_id is None:
-                            quart_id = default_quart_id
-
-                        cursor.execute("SELECT id FROM personnel WHERE matricule = ?", (matricule,))
-                        existing = cursor.fetchone()
-
-                        if existing:
-                            cursor.execute("""
-                                UPDATE personnel SET
-                                    badge_id=?, nom=?, prenom=?, type_person=?, fonction=?,
-                                    activite_id=?, division_id=?, direction_id=?, departement_id=?, service_id=?, equipe_id=?,
-                                    date_embauche=?, date_naissance=?, adresse=?, telephone=?, email=?,
-                                    statut=?, concerne_pointage=?, type_quart=?, heure_entree_theorique=?,
-                                    heure_sortie_theorique=?, tolerance_entree=?, tolerance_sortie=?, quart_id=?
-                                WHERE matricule=?
-                            """, (badge_id, nom, prenom, type_person, fonction,
-                                  activite_id, division_id, direction_id, departement_id, service_id, equipe_id,
-                                  date_embauche, date_naissance, adresse, telephone, email,
-                                  statut, concerne_pointage, type_quart, heure_entree, heure_sortie,
-                                  tolerance_entree, tolerance_sortie, quart_id, matricule))
-                            results['mis_a_jour'] += 1
-                        else:
-                            cursor.execute("""
-                                INSERT INTO personnel (
-                                    matricule, badge_id, nom, prenom, type_person, fonction,
-                                    activite_id, division_id, direction_id, departement_id, service_id, equipe_id,
-                                    date_embauche, date_naissance, adresse, telephone, email,
-                                    statut, concerne_pointage, type_quart, heure_entree_theorique,
-                                    heure_sortie_theorique, tolerance_entree, tolerance_sortie, quart_id
-                                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                            """, (matricule, badge_id, nom, prenom, type_person, fonction,
-                                  activite_id, division_id, direction_id, departement_id, service_id, equipe_id,
-                                  date_embauche, date_naissance, adresse, telephone, email,
-                                  statut, concerne_pointage, type_quart, heure_entree, heure_sortie,
-                                  tolerance_entree, tolerance_sortie, quart_id))
-                            results['importes'] += 1
-                        conn.commit()
-                    except Exception as e:
-                        results['erreurs'] += 1
-                        results['details'].append(f"Ligne {idx+2}: {str(e)}")
-                        conn.rollback()
-            return results
-        except Exception as e:
-            results['erreurs'] = results['total']
-            results['details'].append(f"Erreur globale: {str(e)}")
-            return results
-        
-    # ------------------------------------------------------------
-    # Importation de fichier pointages
-    # ------------------------------------------------------------  
-    def import_pointages_from_file(self, filepath, format_colonnes=None, user_id=None):
+    def import_pointages_from_file(self, filepath, format_colonnes=None, user_id=None, progress_callback=None):
         import pandas as pd
         from datetime import datetime
         import os
         import re
-        from collections import defaultdict
 
         results = {'total': 0, 'importes': 0, 'doublons': 0, 'erreurs': 0, 'non_concernes': 0, 'details': []}
+    
+        if progress_callback:
+            progress_callback(5, "Vérification du fichier...")
+    
         try:
             if not os.path.exists(filepath):
                 raise Exception("Fichier non trouvé")
+        
+            # Déterminer le format du fichier
             if filepath.lower().endswith('.csv'):
                 df = pd.read_csv(filepath, encoding='utf-8')
             else:
                 df = pd.read_excel(filepath)
+        
             results['total'] = len(df)
             print(f"[DEBUG] {len(df)} lignes lues. Colonnes : {list(df.columns)}")
+        
+            if progress_callback:
+                progress_callback(10, f"Fichier lu : {len(df)} lignes")
 
-            # Déterminer les colonnes
+            # Détection automatique ou utilisation des colonnes fournies
             if format_colonnes:
                 matricule_col = format_colonnes.get('matricule')
                 datetime_col = format_colonnes.get('datetime')
@@ -972,12 +981,18 @@ class Database:
                 results['details'].append(f"Colonne '{datetime_col}' introuvable")
                 return results
 
-            # Grouper par agent et par jour
-            # Dictionnaire : (matricule_clean, date) -> liste des heures
-            agent_day_points = defaultdict(list)
+            # Prétraitement : grouper par matricule et date pour optimiser
+            grouped_data = {}
+        
+            if progress_callback:
+                progress_callback(15, "Prétraitement des données...")
 
-            # Première passe : lire toutes les lignes et collecter les heures
+            # Première passe : structurer les données par (matricule_clean, date)
             for idx, row in df.iterrows():
+                if progress_callback and idx % 1000 == 0:
+                    progress = 15 + int((idx / max(len(df), 1)) * 30)
+                    progress_callback(min(progress, 45), f"Traitement ligne {idx+1}/{len(df)}...")
+            
                 try:
                     brut = str(row[matricule_col]).strip()
                     if not brut or brut == 'nan':
@@ -985,38 +1000,40 @@ class Database:
                         results['details'].append(f"Ligne {idx+2}: matricule vide")
                         continue
 
-                    # Extraction du matricule
+                    # Extraction du matricule (premiers caractères alphanumériques)
                     match = re.match(r'^([A-Za-z0-9]+)', brut)
                     if match:
                         matricule_clean = match.group(1).upper()
                     else:
                         matricule_clean = brut.split()[0].strip().upper()
 
-                    # Vérifier que l'agent existe (sinon on ne pourra pas importer)
+                    # Vérification de l'existence de l'agent
                     pers = self.get_personnel_by_matricule(matricule_clean)
                     if not pers:
                         results['erreurs'] += 1
                         results['details'].append(f"Ligne {idx+2}: matricule '{matricule_clean}' inconnu")
                         continue
+                
                     if not pers.get('concerne_pointage', 1):
                         results['non_concernes'] += 1
                         continue
 
-                    # Conversion datetime
                     dt_val = row[datetime_col]
                     if pd.isna(dt_val):
                         results['erreurs'] += 1
                         results['details'].append(f"Ligne {idx+2}: datetime vide")
                         continue
 
+                    # Conversion datetime robuste
                     if isinstance(dt_val, (int, float)):
-                        dt = pd.to_datetime(dt_val, unit='D', origin='1899-12-30')
+                       dt = pd.to_datetime(dt_val, unit='D', origin='1899-12-30')
                     else:
                         dt_str = str(dt_val).strip()
                         dt_str = ' '.join(dt_str.split())
                         formats = [
                             '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%Y-%m-%d %H:%M:%S',
-                            '%Y-%m-%d %H:%M', '%d/%m/%Y', '%Y-%m-%d'
+                            '%Y-%m-%d %H:%M', '%d/%m/%Y', '%Y-%m-%d', '%d/%m/%Y %H:%M:%S',
+                            '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M'
                         ]
                         dt = None
                         for fmt in formats:
@@ -1031,145 +1048,491 @@ class Database:
                             except:
                                 results['erreurs'] += 1
                                 results['details'].append(f"Ligne {idx+2}: datetime invalide '{dt_str}'")
-                            continue
+                                continue
 
                     date_pt = dt.date()
                     heure_pt = dt.time()
-
-                    # Stocker pour ce (matricule_clean, date)
-                    key = (matricule_clean, date_pt, pers['id'])
-                    agent_day_points[key].append((heure_pt, brut, pers))
-
+                
+                    key = (pers['id'], date_pt)
+                    if key not in grouped_data:
+                        grouped_data[key] = {'heures': [], 'brut': brut, 'pers': pers}
+                    grouped_data[key]['heures'].append(heure_pt)
+                
                 except Exception as e:
                     results['erreurs'] += 1
                     results['details'].append(f"Ligne {idx+2}: {str(e)}")
-                    print(f"[ERROR] Ligne {idx+2}: {e}")
 
-            # Deuxième passe : pour chaque (agent, date), prendre min et max
+            if progress_callback:
+                progress_callback(50, "Insertion en base de données...")
+
+            # Deuxième passe : insertion avec gestion entrée/sortie
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                for (matricule_clean, date_pt, personnel_id), points in agent_day_points.items():
-                    if len(points) == 0:
+                processed = 0
+                total_items = len(grouped_data)
+            
+                for (personnel_id, date_pt), data in grouped_data.items():
+                    processed += 1
+                    if progress_callback and processed % 10 == 0:
+                        progress = 50 + int((processed / max(total_items, 1)) * 40)
+                        progress_callback(min(progress, 90), f"Insertion {processed}/{total_items}...")
+                
+                    heures = sorted(data['heures'])
+                    pers = data['pers']
+                    brut = data['brut']
+                
+                    if len(heures) == 0:
                         continue
-                    # Trier par heure
-                    points.sort(key=lambda x: x[0])
-                    # Heure min -> entrée, heure max -> sortie
-                    heure_entree = points[0][0]
-                    brut_entree = points[0][1]
-                    pers = points[0][2]
-                    heure_sortie = points[-1][0]
-                    brut_sortie = points[-1][1]
-
-                    # Insérer l'entrée
+                
+                    # Premier pointage = entrée
+                    heure_entree = heures[0]
                     cursor.execute('''
                         INSERT INTO pointages (personnel_id, matricule, badge_id, type_pointage, date_pointage, heure_pointage, mode, user_id)
                         VALUES (?,?,?,?,?,?,?,?)
-                    ''', (pers['id'], brut_entree, pers.get('badge_id'), 'entrée', date_pt, heure_entree.strftime('%H:%M:%S'), 'import', user_id))
+                    ''', (pers['id'], brut, pers.get('badge_id'), 'entrée', date_pt, heure_entree.strftime('%H:%M:%S'), 'import', user_id))
                     results['importes'] += 1
-
-                    # Insérer la sortie si différente de l'entrée (même heure ? au cas où un seul pointage)
-                    if heure_entree != heure_sortie:
+                
+                    # Dernier pointage = sortie (si différent)
+                    if len(heures) > 1 and heure_entree != heures[-1]:
+                        heure_sortie = heures[-1]
                         cursor.execute('''
                             INSERT INTO pointages (personnel_id, matricule, badge_id, type_pointage, date_pointage, heure_pointage, mode, user_id)
                             VALUES (?,?,?,?,?,?,?,?)
-                        ''', (pers['id'], brut_sortie, pers.get('badge_id'), 'sortie', date_pt, heure_sortie.strftime('%H:%M:%S'), 'import', user_id))
+                        ''', (pers['id'], brut, pers.get('badge_id'), 'sortie', date_pt, heure_sortie.strftime('%H:%M:%S'), 'import', user_id))
                         results['importes'] += 1
-                    else:
-                        results['details'].append(f"Agent {matricule_clean} le {date_pt}: un seul pointage, importé comme entrée uniquement")
-                conn.commit()
-
+                
+                    conn.commit()
+            
+                if progress_callback:
+                    progress_callback(95, "Finalisation...")
+        
+            if progress_callback:
+                progress_callback(100, f"Import terminé : {results['importes']} pointages")
+        
+            return results
+        
         except Exception as e:
             results['erreurs'] = results['total']
             results['details'].append(f"Erreur globale: {str(e)}")
-            print(f"[ERROR] {e}")
-        return results
+            if progress_callback:
+                progress_callback(100, f"Erreur : {str(e)}")
+            return results
 
-
-    # ------------------------------------------------------------
+    # ------------------------------------------------------------------------------------------------------------
     # Gestion des entités hiérarchiques
-    # ------------------------------------------------------------
+    # ------------------------------------------------------------------------------------------------------------
+    
+    #----------------------------------------------------------------------------------------------------
+    # Activités
+    #----------------------------------------------------------------------------------------------------
     def get_all_activites(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_activite FROM activites WHERE active = 1 ORDER BY nom_activite")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-
+            c.execute("SELECT id, nom_activite as nom, code_activite as code, responsable, active FROM activites WHERE active = 1 ORDER BY nom_activite")
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'active': row['active']
+                })
+            return resultats
+        
+    def get_activite(self, activite_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, nom_activite, code_activite, responsable, active FROM activites WHERE id = ?", (activite_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None 
+    
     def add_activite(self, nom, code=None, responsable=None):
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute("INSERT INTO activites (nom_activite, code_activite, responsable, active) VALUES (?,?,?,1)", (nom, code, responsable))
             conn.commit()
             return c.lastrowid
-
+    
+    def update_activite(self, activite_id, nom, code=None, responsable=None, active=True):
+        """Met à jour une activité existante."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE activites 
+                SET nom_activite = ?, code_activite = ?, responsable = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, 1 if active else 0, activite_id))
+            conn.commit()
+            return c.rowcount > 0
+    
+    def delete_activite(self, activite_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM activites WHERE id = ?", (activite_id,))
+            conn.commit()
+            return c.rowcount > 0
+    #----------------------------------------------------------------------------------------------------
+    # Divisions
+    #----------------------------------------------------------------------------------------------------
     def get_all_divisions(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_division FROM divisions WHERE active = 1 ORDER BY nom_division")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
+            c.execute("""
+                SELECT d.id, d.nom_division as nom, d.code_division as code, 
+                       d.responsable, d.description, d.active, d.created_at,
+                       a.nom_activite as activite_nom
+                FROM divisions d
+                LEFT JOIN activites a ON d.activite_id = a.id
+                ORDER BY d.nom_division
+            """)
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'description': row['description'] or '',
+                    'active': row['active'],
+                    'created_at': row['created_at'],
+                    'activite_nom': row['activite_nom'] or ''
+                })
+            return resultats
+    
+    def get_division(self, division_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT d.*, a.nom_activite as activite_nom
+                FROM divisions d
+                LEFT JOIN activites a ON d.activite_id = a.id
+                WHERE d.id = ?
+            """, (division_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None
 
     def add_division(self, nom, code=None, responsable=None, description=None, activite_id=None):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO divisions (nom_division, code_division, responsable, description, activite_id, active) VALUES (?,?,?,?,?,1)",
-                      (nom, code, responsable, description, activite_id))
+            c.execute("""
+                INSERT INTO divisions (nom_division, code_division, responsable, description, activite_id, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (nom, code, responsable, description, activite_id))
             conn.commit()
             return c.lastrowid
-
+    
+    def update_division(self, did, nom, code=None, responsable=None, activite_id=None, description=None, active=True):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE divisions 
+                SET nom_division = ?, code_division = ?, responsable = ?, 
+                    activite_id = ?, description = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, activite_id, description, 1 if active else 0, did))
+            conn.commit()
+            return c.rowcount > 0
+        
+    def delete_division(self, did):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM divisions WHERE id = ?", (did,))
+            conn.commit()
+            return c.rowcount > 0
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Directions
+    # ----------------------------------------------------------------------------------------------------
     def get_all_directions(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_direction FROM directions WHERE active = 1 ORDER BY nom_direction")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
-
+            c.execute("""
+                SELECT d.id, d.nom_direction as nom, d.code_direction as code, 
+                       d.responsable, d.description, d.active, d.created_at,
+                       div.nom_division as division_nom
+                FROM directions d
+                LEFT JOIN divisions div ON d.division_id = div.id
+                ORDER BY d.nom_direction
+            """)
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'description': row['description'] or '',
+                    'active': row['active'],
+                    'created_at': row['created_at'],
+                    'division_nom': row['division_nom'] or ''
+                })
+            return resultats
+    
+    #------------------------------------------------------------
+    # Direction
+    #------------------------------------------------------------
+    def get_direction(self, direction_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT d.*, div.nom_division as division_nom
+                FROM directions d
+                LEFT JOIN divisions div ON d.division_id = div.id
+                WHERE d.id = ?
+            """, (direction_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None
+    
     def add_direction(self, nom, code=None, responsable=None, description=None, division_id=None):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO directions (nom_direction, code_direction, responsable, description, division_id, active) VALUES (?,?,?,?,?,1)",
-                      (nom, code, responsable, description, division_id))
+            c.execute("""
+                INSERT INTO directions (nom_direction, code_direction, responsable, description, division_id, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (nom, code, responsable, description, division_id))
             conn.commit()
-            return c.lastrowid
-
+            return c.lastrowid   
+    
+    def update_direction(self, direction_id, nom, code=None, responsable=None, division_id=None, description=None, active=True):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE directions 
+                SET nom_direction = ?, code_direction = ?, responsable = ?, 
+                    division_id = ?, description = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, division_id, description, 1 if active else 0, direction_id))
+            conn.commit()
+            return c.rowcount > 0  
+    
+    def delete_direction(self, direction_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM directions WHERE id = ?", (direction_id,))
+            conn.commit()
+            return c.rowcount > 0 
+    
+# ============================================================
+# DÉPARTEMENTS
+# ============================================================
     def get_all_departements(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_departement FROM departements WHERE active = 1 ORDER BY nom_departement")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
+            c.execute("""
+                SELECT dep.id, dep.nom_departement as nom, dep.code_departement as code, 
+                       dep.responsable, dep.description, dep.active, dep.created_at,
+                       dir.nom_direction as direction_nom
+                FROM departements dep
+                LEFT JOIN directions dir ON dep.direction_id = dir.id
+                ORDER BY dep.nom_departement
+            """)
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'description': row['description'] or '',
+                    'active': row['active'],
+                    'created_at': row['created_at'],
+                    'direction_nom': row['direction_nom'] or ''
+                })
+            return resultats
 
+    def get_departement(self, departement_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM departements WHERE id = ?", (departement_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None
+    
     def add_departement(self, nom, code=None, responsable=None, description=None, direction_id=None):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO departements (nom_departement, code_departement, responsable, description, direction_id, active) VALUES (?,?,?,?,?,1)",
-                      (nom, code, responsable, description, direction_id))
+            c.execute("""
+                INSERT INTO departements (nom_departement, code_departement, responsable, description, direction_id, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (nom, code, responsable, description, direction_id))
             conn.commit()
             return c.lastrowid
-
+    
+    def update_departement(self, did, nom, code=None, responsable=None, direction_id=None, description=None, active=True):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE departements 
+                SET nom_departement = ?, code_departement = ?, responsable = ?, 
+                    direction_id = ?, description = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, direction_id, description, 1 if active else 0, did))
+            conn.commit()
+            return c.rowcount > 0
+    
+    def delete_departement(self, did):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM departements WHERE id = ?", (did,))
+            conn.commit()
+            return c.rowcount > 0
+        
+# ============================================================
+# SERVICES
+# ============================================================
     def get_all_services(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_service FROM services WHERE active = 1 ORDER BY nom_service")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
+            c.execute("""
+                SELECT s.id, s.nom_service as nom, s.code_service as code, 
+                      s.responsable, s.description, s.active, s.created_at,
+                      d.nom_departement as departement_nom
+                FROM services s
+                LEFT JOIN departements d ON s.departement_id = d.id
+                WHERE s.active = 1
+                ORDER BY s.nom_service
+            """)
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'description': row['description'] or '',
+                    'active': row['active'],
+                    'created_at': row['created_at'],
+                    'departement_nom': row['departement_nom'] or ''
+                })
+            return resultats
 
+    def get_service(self, service_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM services WHERE id = ?", (service_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None
     def add_service(self, nom, code=None, responsable=None, description=None, departement_id=None):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO services (nom_service, code_service, responsable, description, departement_id, active) VALUES (?,?,?,?,?,1)",
-                      (nom, code, responsable, description, departement_id))
+            c.execute("""
+                INSERT INTO services (nom_service, code_service, responsable, description, departement_id, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (nom, code, responsable, description, departement_id))
             conn.commit()
             return c.lastrowid
 
+    def update_service(self, sid, nom, code=None, responsable=None, departement_id=None, description=None, active=True):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE services 
+                SET nom_service = ?, code_service = ?, responsable = ?, 
+                    departement_id = ?, description = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, departement_id, description, 1 if active else 0, sid))
+            conn.commit()
+            return c.rowcount > 0
+
+    def delete_service(self, sid):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM services WHERE id = ?", (sid,))
+            conn.commit()
+            return c.rowcount > 0
+    
+# ============================================================
+# ÉQUIPES
+# ============================================================
     def get_all_equipes(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, nom_equipe FROM equipes WHERE active = 1 ORDER BY nom_equipe")
-            return [{'id': r[0], 'nom': r[1]} for r in c.fetchall()]
+            c.execute("""
+                SELECT e.id, e.nom_equipe as nom, e.code_equipe as code, 
+                       e.responsable, e.description, e.active, e.created_at,
+                       s.nom_service as service_nom
+                FROM equipes e
+                LEFT JOIN services s ON e.service_id = s.id
+                ORDER BY e.nom_equipe
+            """)
+            rows = c.fetchall()
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'id': row['id'],
+                    'nom': row['nom'],
+                    'code': row['code'] or '',
+                    'responsable': row['responsable'] or '',
+                    'description': row['description'] or '',
+                    'active': row['active'],
+                    'created_at': row['created_at'],
+                    'service_nom': row['service_nom'] or ''
+                })
+            return resultats
+
+    def get_equipe(self, equipe_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT e.id, e.nom_equipe as nom, e.code_equipe as code,
+                       e.responsable, e.description, e.active, e.created_at,
+                       s.nom_service as service_nom, e.service_id
+                FROM equipes e
+                LEFT JOIN services s ON e.service_id = s.id
+                WHERE e.id = ?
+            """, (equipe_id,))
+            row = c.fetchone()
+            if row:
+                return dict(row)
+            return None
 
     def add_equipe(self, nom, code=None, responsable=None, description=None, service_id=None):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO equipes (nom_equipe, code_equipe, responsable, description, service_id, active) VALUES (?,?,?,?,?,1)",
-                      (nom, code, responsable, description, service_id))
+            c.execute("""
+                INSERT INTO equipes (nom_equipe, code_equipe, responsable, description, service_id, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (nom, code, responsable, description, service_id))
             conn.commit()
             return c.lastrowid
+
+    def update_equipe(self, eid, nom, code=None, responsable=None, service_id=None, description=None, active=True):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE equipes 
+                SET nom_equipe = ?, code_equipe = ?, responsable = ?, 
+                    service_id = ?, description = ?, active = ?
+                WHERE id = ?
+            """, (nom, code, responsable, service_id, description, 1 if active else 0, eid))
+            conn.commit()
+            return c.rowcount > 0
+
+    def delete_equipe(self, eid):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM equipes WHERE id = ?", (eid,))
+            conn.commit()
+            return c.rowcount > 0
+    
+# ============================================================
+# QUARTS
+# ============================================================
 
     def get_all_quarts(self):
         with self.get_connection() as conn:
@@ -1185,9 +1548,9 @@ class Database:
             conn.commit()
             return c.lastrowid
 
-    # ------------------------------------------------------------
-    # Gestion des pointages (filtres) – version corrigée avec activite_id
-    # ------------------------------------------------------------
+# ------------------------------------------------------------
+# Gestion des pointages (filtres) – version corrigée avec activite_id
+# ------------------------------------------------------------
     def get_pointages_filtres(self, date_debut=None, date_fin=None, matricule=None,
                               type_pointage=None, activite_id=None, division_id=None,
                               direction_id=None, departement_id=None, service_id=None, equipe_id=None,
@@ -1272,22 +1635,25 @@ class Database:
             return c.fetchone()[0] > 0
 
     def get_parametre(self, cle, defaut=''):
+        """Récupère la valeur d'un paramètre depuis la table parametres"""
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT valeur FROM parametres WHERE cle=?", (cle,))
+            c.execute("SELECT valeur FROM parametres WHERE cle = ?", (cle,))
             row = c.fetchone()
-            return row[0] if row else defaut
+            if row:
+                return row['valeur']
+            return defaut
 
     def set_parametre(self, cle, valeur):
+        """Enregistre ou met à jour un paramètre dans la table parametres"""
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM parametres WHERE cle=?", (cle,))
+            c.execute("SELECT COUNT(*) FROM parametres WHERE cle = ?", (cle,))
             if c.fetchone()[0] > 0:
-                c.execute("UPDATE parametres SET valeur=?, updated_at=? WHERE cle=?", (valeur, datetime.now(), cle))
+                c.execute("UPDATE parametres SET valeur = ?, updated_at = CURRENT_TIMESTAMP WHERE cle = ?", (valeur, cle))
             else:
-                c.execute("INSERT INTO parametres (cle, valeur, updated_at) VALUES (?,?,?)", (cle, valeur, datetime.now()))
+                c.execute("INSERT INTO parametres (cle, valeur) VALUES (?, ?)", (cle, valeur))
             conn.commit()
-
     # ------------------------------------------------------------
     # Statistiques pour le tableau de bord
     # ------------------------------------------------------------
@@ -1327,9 +1693,21 @@ class Database:
     # ------------------------------------------------------------
     # Congés
     # ------------------------------------------------------------
+    # ============================================================
+# GESTION DES CONGÉS
+# ============================================================
+
+    def get_conge(self, conge_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM conges WHERE id = ?", (conge_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
+
     def get_conges(self, filtres=None):
         query = """
-            SELECT c.*, p.nom, p.prenom, p.fonction, dir.nom_direction as direction, s.nom_service as service
+            SELECT c.*, p.nom, p.prenom, p.fonction, 
+                   dir.nom_direction as direction, s.nom_service as service
             FROM conges c
             JOIN personnel p ON c.personnel_id = p.id
             LEFT JOIN directions dir ON p.direction_id = dir.id
@@ -1338,19 +1716,22 @@ class Database:
         """
         params = []
         if filtres:
-            if 'statut' in filtres:
+            if filtres.get('statut') and filtres['statut'] != 'Tous':
                 query += " AND c.statut = ?"
                 params.append(filtres['statut'])
-            if 'matricule' in filtres:
-                query += " AND c.matricule LIKE ?"
-                params.append(f'%{filtres["matricule"]}%')
-            if 'type_conge' in filtres:
+            if filtres.get('matricule'):
+                query += " AND c.matricule = ?"
+                params.append(filtres['matricule'])
+            if filtres.get('date_debut'):
+                query += " AND c.date_debut >= ?"
+                params.append(filtres['date_debut'])
+            if filtres.get('date_fin'):
+                query += " AND c.date_fin <= ?"
+                params.append(filtres['date_fin'])
+            if filtres.get('type_conge') and filtres['type_conge'] != 'Tous':
                 query += " AND c.type_conge = ?"
                 params.append(filtres['type_conge'])
-            if 'date_debut' in filtres and 'date_fin' in filtres:
-                query += " AND c.date_debut <= ? AND c.date_fin >= ?"
-                params.append(filtres['date_fin'], filtres['date_debut'])
-        query += " ORDER BY c.date_demande DESC"
+        query += " ORDER BY c.created_at DESC"
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute(query, params)
@@ -1359,23 +1740,131 @@ class Database:
     def add_conge(self, data):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('''
-                INSERT INTO conges (personnel_id, matricule, type_conge, date_debut, date_fin, duree_jours, motif, justificatif, statut, date_demande)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            ''', data)
+            c.execute("""
+                INSERT INTO conges (personnel_id, matricule, type_conge, date_debut, date_fin, duree_jours, 
+                                motif, justificatif, statut, date_demande)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, data)
             conn.commit()
             return c.lastrowid
 
-    def update_conge_statut(self, conge_id, statut, valide_par):
+    def update_conge(self, conge_id, data):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('''
-                UPDATE conges SET statut=?, approuve_par=?, date_approbation=?
-                WHERE id=?
-            ''', (statut, valide_par, datetime.now(), conge_id))
+            c.execute("""
+                UPDATE conges 
+                SET type_conge = ?, date_debut = ?, date_fin = ?, duree_jours = ?, motif = ?, justificatif = ?
+                WHERE id = ?
+            """, (*data, conge_id))
             conn.commit()
             return c.rowcount > 0
 
+    def update_conge_statut(self, conge_id, statut, approuve_par):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE conges SET statut = ?, approuve_par = ?, date_approbation = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (statut, approuve_par, conge_id))
+            conn.commit()
+            return c.rowcount > 0
+
+    def delete_conge(self, conge_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM conges WHERE id = ?", (conge_id,))
+            conn.commit()
+            return c.rowcount > 0
+
+# ============================================================
+# GESTION DES HEURES SUPPLÉMENTAIRES
+# ============================================================
+
+    def get_heure_sup(self, hs_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT hs.*, p.nom, p.prenom 
+                FROM heures_supplementaires hs
+                JOIN personnel p ON hs.personnel_id = p.id
+                WHERE hs.id = ?
+            """, (hs_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
+
+    def get_heures_supplementaires(self, filtres=None):
+        query = """
+            SELECT hs.*, p.nom, p.prenom, p.fonction,
+                  dir.nom_direction as direction, s.nom_service as service
+            FROM heures_supplementaires hs
+            JOIN personnel p ON hs.personnel_id = p.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN services s ON p.service_id = s.id
+            WHERE 1=1
+        """
+        params = []
+        if filtres:
+            if filtres.get('statut') and filtres['statut'] != 'Tous':
+                query += " AND hs.statut = ?"
+                params.append(filtres['statut'])
+            if filtres.get('matricule'):
+                query += " AND hs.matricule = ?"
+                params.append(filtres['matricule'])
+            if filtres.get('date_debut'):
+                query += " AND hs.date_heure_debut >= ?"
+                params.append(filtres['date_debut'])
+            if filtres.get('date_fin'):
+                query += " AND hs.date_heure_fin <= ?"
+                params.append(filtres['date_fin'])
+            if filtres.get('type_heure_sup') and filtres['type_heure_sup'] != 'Tous':
+                query += " AND hs.type_heure_sup = ?"
+                params.append(filtres['type_heure_sup'])
+        query += " ORDER BY hs.created_at DESC"
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, params)
+            return [dict(row) for row in c.fetchall()]
+
+    def add_heure_sup(self, data):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO heures_supplementaires 
+                (personnel_id, matricule, date_heure_debut, date_heure_fin, duree_heures, 
+                  type_heure_sup, taux_majoration, est_weekend, est_jour_ferie, motif, statut)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, data)
+            conn.commit()
+            return c.lastrowid
+
+    def update_heure_sup(self, hs_id, data):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE heures_supplementaires 
+                SET date_heure_debut = ?, date_heure_fin = ?, duree_heures = ?, 
+                    type_heure_sup = ?, taux_majoration = ?, motif = ?
+                WHERE id = ?
+            """, (*data, hs_id))
+            conn.commit()
+            return c.rowcount > 0
+
+    def update_heure_sup_statut(self, hs_id, statut, approuve_par):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE heures_supplementaires SET statut = ?, approuve_par = ?, date_approbation = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (statut, approuve_par, hs_id))
+            conn.commit()
+            return c.rowcount > 0
+
+    def delete_heure_sup(self, hs_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM heures_supplementaires WHERE id = ?", (hs_id,))
+            conn.commit()
+            return c.rowcount > 0
     # ------------------------------------------------------------
     # Jours fériés
     # ------------------------------------------------------------
@@ -1396,55 +1885,6 @@ class Database:
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute("DELETE FROM jours_feries WHERE id=?", (jour_id,))
-            conn.commit()
-            return c.rowcount > 0
-
-    # ------------------------------------------------------------
-    # Heures supplémentaires
-    # ------------------------------------------------------------
-    def get_heures_supplementaires(self, matricule=None, statut=None, date_debut=None, date_fin=None):
-        query = """
-            SELECT hs.*, p.nom, p.prenom
-            FROM heures_supplementaires hs
-            JOIN personnel p ON hs.personnel_id = p.id
-            WHERE 1=1
-        """
-        params = []
-        if matricule:
-            query += " AND hs.matricule LIKE ?"
-            params.append(f'%{matricule}%')
-        if statut:
-            query += " AND hs.statut = ?"
-            params.append(statut)
-        if date_debut:
-            query += " AND hs.date_heure_debut >= ?"
-            params.append(date_debut)
-        if date_fin:
-            query += " AND hs.date_heure_fin <= ?"
-            params.append(date_fin)
-        query += " ORDER BY hs.created_at DESC"
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute(query, params)
-            return [dict(row) for row in c.fetchall()]
-
-    def add_heure_supplementaire(self, personnel_id, matricule, date_debut, date_fin, duree, type_sup, taux, motif):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO heures_supplementaires (personnel_id, matricule, date_heure_debut, date_heure_fin, duree_heures, type_heure_sup, taux_majoration, motif, statut)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            ''', (personnel_id, matricule, date_debut, date_fin, duree, type_sup, taux, motif, 'en_attente'))
-            conn.commit()
-            return c.lastrowid
-
-    def update_heure_sup_statut(self, hs_id, statut, valide_par):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                UPDATE heures_supplementaires SET statut=?, approuve_par=?, date_approbation=?
-                WHERE id=?
-            ''', (statut, valide_par, datetime.now(), hs_id))
             conn.commit()
             return c.rowcount > 0
 
@@ -1484,6 +1924,78 @@ class Database:
             ''', (justification, retard_id))
             conn.commit()
             return c.rowcount > 0
+    
+    #------------------------------------------------------------------------------
+    def get_retards_cumules_par_jour(self, date_debut, date_fin, direction_nom=None,
+                                  departement_nom=None, service_nom=None, equipe_nom=None):
+        """Retourne les statistiques de retards cumulés par jour pour la période"""
+        from datetime import datetime, timedelta
+    
+        debut = datetime.strptime(date_debut, '%Y-%m-%d').date() if isinstance(date_debut, str) else date_debut
+        fin = datetime.strptime(date_fin, '%Y-%m-%d').date() if isinstance(date_fin, str) else date_fin
+    
+        # Requête de base
+        query = """
+            SELECT 
+                rc.date_retard as date,
+                p.matricule,
+                p.nom,
+                p.prenom,
+                dir.nom_direction as direction,
+                dep.nom_departement as departement,
+                s.nom_service as service,
+                e.nom_equipe as equipe,
+                COUNT(rc.id) as nb_retards,
+                SUM(rc.minutes_retard) as total_minutes,
+                SUM(CASE WHEN rc.est_justifie = 1 THEN rc.minutes_retard ELSE 0 END) as minutes_justifiees,
+                SUM(CASE WHEN rc.est_justifie = 0 THEN rc.minutes_retard ELSE 0 END) as minutes_non_justifiees
+            FROM retards_cumules rc
+            JOIN personnel p ON rc.personnel_id = p.id
+            LEFT JOIN directions dir ON p.direction_id = dir.id
+            LEFT JOIN departements dep ON p.departement_id = dep.id
+            LEFT JOIN services s ON p.service_id = s.id
+            LEFT JOIN equipes e ON p.equipe_id = e.id
+            WHERE rc.date_retard BETWEEN ? AND ?
+        """
+        params = [debut, fin]
+    
+        if direction_nom and direction_nom not in ('Toutes', ''):
+            query += " AND dir.nom_direction = ?"
+            params.append(direction_nom)
+        if departement_nom and departement_nom not in ('Tous', ''):
+            query += " AND dep.nom_departement = ?"
+            params.append(departement_nom)
+        if service_nom and service_nom not in ('Tous', ''):
+            query += " AND s.nom_service = ?"
+            params.append(service_nom)
+        if equipe_nom and equipe_nom not in ('Toutes', ''):
+            query += " AND e.nom_equipe = ?"
+            params.append(equipe_nom)
+    
+        query += " GROUP BY rc.date_retard, p.id ORDER BY rc.date_retard DESC, p.nom, p.prenom"
+    
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, params)
+            rows = c.fetchall()
+        
+            resultats = []
+            for row in rows:
+                resultats.append({
+                    'date': row['date'],
+                    'matricule': row['matricule'],
+                    'nom': row['nom'],
+                    'prenom': row['prenom'],
+                    'direction': row['direction'] or '',
+                    'departement': row['departement'] or '',
+                    'service': row['service'] or '',
+                    'equipe': row['equipe'] or '',
+                    'nb_retards': row['nb_retards'] or 0,
+                    'total_minutes': row['total_minutes'] or 0,
+                    'minutes_justifiees': row['minutes_justifiees'] or 0,
+                    'minutes_non_justifiees': row['minutes_non_justifiees'] or 0
+                })
+            return resultats
 
     # ------------------------------------------------------------
     # Pointage rapide (ajout de pointage)
@@ -1535,7 +2047,7 @@ class Database:
     #------------------------------------------------------------
     # Rapport de présence avec filtres avancés
     #------------------------------------------------------------
-    def get_presence_report(self, date_debut, date_fin, matricule=None, direction_nom=None,
+    def get_presence_report(self, date_debut, date_fin, search=None, direction_nom=None,
                         departement_nom=None, service_nom=None, equipe_nom=None,
                         type_rapport='resume'):
         from datetime import datetime, timedelta
@@ -1576,9 +2088,11 @@ class Database:
             WHERE p.statut = 'actif' AND p.concerne_pointage = 1
         """
         params_agents = []
-        if matricule:
-            query_agents += " AND p.matricule = ?"
-            params_agents.append(matricule)
+        if search:
+            query_agents += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ?)"
+            params_agents.append(f"%{search}%")
+            params_agents.append(f"%{search}%")
+            params_agents.append(f"%{search}%")
         if direction_nom:
             query_agents += " AND dir.nom_direction = ?"
             params_agents.append(direction_nom)
@@ -1669,14 +2183,38 @@ class Database:
     #------------------------------------------------------------
     # Rapport d'absence avec filtres avancés
     #------------------------------------------------------------
-    def get_absence_report(self, date_debut, date_fin, matricule=None, utilisateur_id=None,
-                           direction_nom=None, departement_nom=None, service_nom=None, equipe_nom=None,
-                           type_rapport=None):
+    def get_absence_report(self, date_debut, date_fin, search=None, direction_nom=None,
+                       departement_nom=None, service_nom=None, equipe_nom=None,
+                       type_rapport='resume'):
+        from datetime import datetime, timedelta
+
         debut = datetime.strptime(date_debut, '%Y-%m-%d').date()
         fin = datetime.strptime(date_fin, '%Y-%m-%d').date()
 
+         # Toutes les dates de la période
+        # Toutes les dates sous forme de chaîne YYYY-MM-DD
+        toutes_dates_str = [(debut + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((fin - debut).days + 1)]
+        toutes_dates_obj = [datetime.strptime(d, '%Y-%m-%d').date() for d in toutes_dates_str]
+        # Configuration des weekends
+        weekend_jours = [5, 6]  # samedi, dimanche
+        try:
+            weekend_str = self.get_parametre('jours_weekend', '5,6')
+            weekend_jours = [int(x.strip()) for x in weekend_str.split(',')]
+        except:
+            pass
+
+        def est_ouvrable(d):
+            return d.weekday() not in weekend_jours
+
+        def est_ferie(d):
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM jours_feries WHERE date_jour = ?", (d,))
+                return c.fetchone()[0] > 0
+
+        # Requête pour les agents (recherche élargie)
         query_agents = """
-            SELECT p.id, p.matricule, p.nom, p.prenom, p.fonction,
+            SELECT p.id, p.matricule, p.nom, p.prenom, p.badge_id, p.fonction,
                    dir.nom_direction as direction,
                    dep.nom_departement as departement,
                    s.nom_service as service,
@@ -1689,22 +2227,20 @@ class Database:
             WHERE p.statut = 'actif' AND p.concerne_pointage = 1
         """
         params_agents = []
-        if matricule:
-            query_agents += " AND p.matricule = ?"
-            params_agents.append(matricule)
-        if utilisateur_id:
-            query_agents += " AND p.id = ?"
-            params_agents.append(utilisateur_id)
-        if direction_nom:
+        if search:
+            st = f'%{search}%'
+            query_agents += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ? OR p.badge_id LIKE ?)"
+            params_agents.extend([st, st, st, st])
+        if direction_nom and direction_nom not in ('', 'Toutes'):
             query_agents += " AND dir.nom_direction = ?"
             params_agents.append(direction_nom)
-        if departement_nom:
+        if departement_nom and departement_nom not in ('', 'Tous'):
             query_agents += " AND dep.nom_departement = ?"
             params_agents.append(departement_nom)
-        if service_nom:
+        if service_nom and service_nom not in ('', 'Tous'):
             query_agents += " AND s.nom_service = ?"
             params_agents.append(service_nom)
-        if equipe_nom:
+        if equipe_nom and equipe_nom not in ('', 'Toutes'):
             query_agents += " AND e.nom_equipe = ?"
             params_agents.append(equipe_nom)
 
@@ -1713,47 +2249,106 @@ class Database:
             c.execute(query_agents, params_agents)
             agents = c.fetchall()
 
-            resultats = []
-            for agent in agents:
-                jours_ouvres = self._calculer_jours_ouvres(debut, fin)
-                nb_jours_ouvres = len(jours_ouvres)
+            if type_rapport == 'resume':
+                resultats = []
+                for agent in agents:
+                    # Jours ouvrés de la période (exclut weekends et fériés)
+                    jours_ouvrables = sum(1 for d in toutes_dates_obj if est_ouvrable(d) and not est_ferie(d))
 
-                c.execute("""
-                    SELECT COUNT(DISTINCT date_pointage)
-                    FROM pointages
-                    WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
-                """, (agent['id'], debut, fin))
-                nb_pointes = c.fetchone()[0] or 0
+                    # Jours de présence (pointages distincts)
+                    c.execute("""
+                        SELECT COUNT(DISTINCT date_pointage) as jours
+                        FROM pointages
+                        WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                    """, (agent['id'], debut, fin))
+                    nb_presences = c.fetchone()[0] or 0
 
-                c.execute("""
-                    SELECT SUM(
-                        julianday(MIN(date_fin, ?)) - julianday(MAX(date_debut, ?)) + 1
-                    )
-                    FROM conges
-                    WHERE personnel_id = ? AND statut = 'approuve'
-                        AND date_debut <= ? AND date_fin >= ?
-                """, (fin, debut, agent['id'], fin, debut))
-                nb_conges = c.fetchone()[0] or 0
-                nb_conges = int(round(nb_conges))
+                    # Jours de congés (périodes validées)
+                    c.execute("""
+                        SELECT SUM(
+                            julianday(MIN(date_fin, ?)) - julianday(MAX(date_debut, ?)) + 1
+                        ) as total
+                        FROM conges
+                        WHERE personnel_id = ? AND statut = 'approuve'
+                            AND date_debut <= ? AND date_fin >= ?
+                    """, (fin, debut, agent['id'], fin, debut))
+                    row = c.fetchone()
+                    nb_conges = int(row[0]) if row and row[0] else 0
 
-                absences = nb_jours_ouvres - nb_pointes - nb_conges
-                if absences < 0:
-                    absences = 0
+                    absences = jours_ouvrables - nb_presences - nb_conges
+                    if absences < 0:
+                        absences = 0
 
-                resultats.append({
-                    'matricule': agent['matricule'],
-                    'nom': agent['nom'],
-                    'prenom': agent['prenom'],
-                    'direction': agent['direction'] or '',
-                    'departement': agent['departement'] or '',
-                    'service': agent['service'] or '',
-                    'equipe': agent['equipe'] or '',
-                    'jours_ouvres': nb_jours_ouvres,
-                    'pointes': nb_pointes,
-                    'conges': nb_conges,
-                    'absences': absences
-                })
-            return resultats
+                    resultats.append({
+                        'matricule': agent['matricule'],
+                        'nom': agent['nom'],
+                        'prenom': agent['prenom'],
+                        'fonction': agent['fonction'],
+                        'direction': agent['direction'] or '',
+                        'departement': agent['departement'] or '',
+                        'service': agent['service'] or '',
+                        'equipe': agent['equipe'] or '',
+                        'jours_ouvres': jours_ouvrables,
+                        'pointes': nb_presences,
+                        'conges': nb_conges,
+                        'absences': absences
+                    })
+                return resultats
+
+            else:  # mode détail
+                details = []
+                for agent in agents:
+                    # Récupérer les dates de présence (pointages)
+                    c.execute("""
+                        SELECT DISTINCT DATE(date_pointage) as date_presence
+                        FROM pointages
+                        WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
+                    """, (agent['id'], debut, fin))
+                    presences_str = {row[0] for row in c.fetchall()}
+
+                    # Récupérer les dates de congé
+                    conges_str = set()
+                    c.execute("""
+                        SELECT date_debut, date_fin
+                        FROM conges
+                        WHERE personnel_id = ? AND statut = 'approuve'
+                            AND date_debut <= ? AND date_fin >= ?
+                    """, (agent['id'], fin, debut))
+                    for row in c.fetchall():
+                        d_deb = row[0] 
+                        d_fin = row[1] 
+                        
+                        # Si ce sont des date objects, les convertir en string
+                        if not isinstance(d_deb, str):
+                            d_deb = d_deb.strftime('%Y-%m-%d')
+                        if not isinstance(d_fin, str):
+                            d_fin = d_fin.strftime('%Y-%m-%d')
+                        d = datetime.strptime(d_deb, '%Y-%m-%d').date()
+                        d_end = datetime.strptime(d_fin, '%Y-%m-%d').date()
+                        while d <= d_end:
+                            conges_str.add(d.strftime('%Y-%m-%d'))
+                            d += timedelta(days=1)
+                    # Parcourir chaque jour ouvrable
+                    for d_str in toutes_dates_str:
+                        d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
+                        if not est_ouvrable(d_obj) or est_ferie(d_obj):
+                            continue
+                        if d_str not in presences_str and d_str not in conges_str:
+                            details.append({
+                                'date': d_str,
+                                'matricule': agent['matricule'],
+                                'nom': agent['nom'],
+                                'prenom': agent['prenom'],
+                                'direction': agent['direction'] or '',
+                                'departement': agent['departement'] or '',
+                                'service': agent['service'] or '',
+                                'equipe': agent['equipe'] or '',
+                                'type_absence': 'Absence injustifiée'
+                            })
+                return details
+    #------------------------------------------------------------
+    # Fonction utilitaire pour calculer les jours ouvrés entre deux dates
+    #------------------------------------------------------------
 
     def _calculer_jours_ouvres(self, debut, fin):
         jours = []
@@ -1799,9 +2394,9 @@ class Database:
     #---------------------------------------------------------------------------------------
     # Retards cumulés avec filtres avancés
     #---------------------------------------------------------------------------------------
-    def get_retard_report(self, date_debut, date_fin, matricule=None, direction_nom=None,
-                      departement_nom=None, service_nom=None, equipe_nom=None,
-                      type_rapport='resume', utiliser_globaux=False):
+    def get_retard_report(self, date_debut, date_fin, search=None, matricule=None,
+                      direction_nom=None, departement_nom=None, service_nom=None,
+                      equipe_nom=None, type_rapport='resume', utiliser_globaux=True):
         from datetime import datetime
 
         def heure_en_minutes(h):
@@ -1814,6 +2409,8 @@ class Database:
         debut = datetime.strptime(date_debut, '%Y-%m-%d').date()
         fin = datetime.strptime(date_fin, '%Y-%m-%d').date()
 
+        recherche = search if search is not None else matricule
+
         if utiliser_globaux:
             heure_entree_globale = self.get_parametre('heure_entree_globale', '08:00:00')
             heure_sortie_globale = self.get_parametre('heure_sortie_globale', '17:00:00')
@@ -1825,15 +2422,14 @@ class Database:
 
         # Requête pour les entrées
         query_entrees = """
-            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom,
+            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom, p.badge_id,
                    p.heure_entree_theorique, p.tolerance_entree,
                    p.heure_sortie_theorique, p.tolerance_sortie,
                    pt.date_pointage, pt.heure_pointage,
                    dir.nom_direction as direction_nom,
                    dep.nom_departement as departement_nom,
                    s.nom_service as service_nom,
-                   e.nom_equipe as equipe_nom,
-                   'entree' as type_pointage
+                   e.nom_equipe as equipe_nom
             FROM pointages pt
             JOIN personnel p ON pt.personnel_id = p.id
             LEFT JOIN directions dir ON p.direction_id = dir.id
@@ -1846,17 +2442,15 @@ class Database:
         """
         params_entrees = [debut, fin]
 
-        # Requête pour les sorties
         query_sorties = """
-            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom,
-                  p.heure_entree_theorique, p.tolerance_entree,
-                  p.heure_sortie_theorique, p.tolerance_sortie,
-                  pt.date_pointage, pt.heure_pointage,
-                  dir.nom_direction as direction_nom,
-                  dep.nom_departement as departement_nom,
-                  s.nom_service as service_nom,
-                  e.nom_equipe as equipe_nom,
-                  'sortie' as type_pointage
+            SELECT p.id AS personnel_id, p.matricule, p.nom, p.prenom, p.badge_id,
+                   p.heure_entree_theorique, p.tolerance_entree,
+                   p.heure_sortie_theorique, p.tolerance_sortie,
+                   pt.date_pointage, pt.heure_pointage,
+                   dir.nom_direction as direction_nom,
+                   dep.nom_departement as departement_nom,
+                   s.nom_service as service_nom,
+                   e.nom_equipe as equipe_nom
             FROM pointages pt
             JOIN personnel p ON pt.personnel_id = p.id
             LEFT JOIN directions dir ON p.direction_id = dir.id
@@ -1869,27 +2463,33 @@ class Database:
         """
         params_sorties = [debut, fin]
 
-        # Ajout des filtres communs
-        def ajouter_filtres(query, params, matricule, direction_nom, departement_nom, service_nom, equipe_nom):
-            if matricule:
-                query += " AND p.matricule LIKE ?"
-                params.append(f'%{matricule}%')
-            if direction_nom:
-                query += " AND dir.nom_direction = ?"
-                params.append(direction_nom)
-            if departement_nom:
-                query += " AND dep.nom_departement = ?"
-                params.append(departement_nom)
-            if service_nom:
-                query += " AND s.nom_service = ?"
-                params.append(service_nom)
-            if equipe_nom:
-                query += " AND e.nom_equipe = ?"
-                params.append(equipe_nom)
-            return query, params
+        if recherche:
+            st = f'%{recherche}%'
+            query_entrees += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ? OR p.badge_id LIKE ?)"
+            params_entrees.extend([st, st, st, st])
+            query_sorties += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ? OR p.badge_id LIKE ?)"
+            params_sorties.extend([st, st, st, st])
 
-        query_entrees, params_entrees = ajouter_filtres(query_entrees, params_entrees, matricule, direction_nom, departement_nom, service_nom, equipe_nom)
-        query_sorties, params_sorties = ajouter_filtres(query_sorties, params_sorties, matricule, direction_nom, departement_nom, service_nom, equipe_nom)
+        if direction_nom and direction_nom not in ('', 'Toutes'):
+            query_entrees += " AND dir.nom_direction = ?"
+            params_entrees.append(direction_nom)
+            query_sorties += " AND dir.nom_direction = ?"
+            params_sorties.append(direction_nom)
+        if departement_nom and departement_nom not in ('', 'Tous'):
+            query_entrees += " AND dep.nom_departement = ?"
+            params_entrees.append(departement_nom)
+            query_sorties += " AND dep.nom_departement = ?"
+            params_sorties.append(departement_nom)
+        if service_nom and service_nom not in ('', 'Tous'):
+            query_entrees += " AND s.nom_service = ?"
+            params_entrees.append(service_nom)
+            query_sorties += " AND s.nom_service = ?"
+            params_sorties.append(service_nom)
+        if equipe_nom and equipe_nom not in ('', 'Toutes'):
+            query_entrees += " AND e.nom_equipe = ?"
+            params_entrees.append(equipe_nom)
+            query_sorties += " AND e.nom_equipe = ?"
+            params_sorties.append(equipe_nom)
 
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -1899,10 +2499,10 @@ class Database:
             rows_sorties = c.fetchall()
 
             penalite_par_min = float(self.get_parametre('penalite_retard', '0.50'))
+            arrondir = self.get_parametre('arrondir_retard', '0') == '1'
 
             if type_rapport == 'resume':
                 resume = {}
-                # Traitement des entrées
                 for row in rows_entrees:
                     pid = row['personnel_id']
                     if pid not in resume:
@@ -1915,9 +2515,9 @@ class Database:
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or '',
                             'nb_retards': 0,
-                            'total_min_retard': 0,
+                            'total_min_retard': 0.0,
                             'nb_departs_anticipes': 0,
-                            'total_min_anticipe': 0,
+                            'total_min_anticipe': 0.0,
                             'penalite': 0.0
                         }
 
@@ -1930,14 +2530,15 @@ class Database:
 
                     minutes_pt = heure_en_minutes(row['heure_pointage'])
                     minutes_th = heure_en_minutes(heure_theorique)
-                    retard = minutes_pt - minutes_th - tolerance
+                    retard = minutes_pt - minutes_th   # retard réel
 
-                    if retard > 0:
+                    if retard > tolerance:   # considéré comme retard
+                        if arrondir:
+                            retard = ((retard + 4) // 5) * 5
                         resume[pid]['nb_retards'] += 1
                         resume[pid]['total_min_retard'] += retard
                         resume[pid]['penalite'] += retard * penalite_par_min
 
-                # Traitement des sorties
                 for row in rows_sorties:
                     pid = row['personnel_id']
                     if pid not in resume:
@@ -1950,9 +2551,9 @@ class Database:
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or '',
                             'nb_retards': 0,
-                            'total_min_retard': 0,
+                            'total_min_retard': 0.0,
                             'nb_departs_anticipes': 0,
-                            'total_min_anticipe': 0,
+                            'total_min_anticipe': 0.0,
                             'penalite': 0.0
                         }
 
@@ -1965,20 +2566,20 @@ class Database:
 
                     minutes_pt = heure_en_minutes(row['heure_pointage'])
                     minutes_th = heure_en_minutes(heure_theorique)
-                    anticipe = minutes_th - minutes_pt - tolerance
+                    anticipe = minutes_th - minutes_pt   # anticipation réelle
 
-                    if anticipe > 0:
+                    if anticipe > tolerance:
                         resume[pid]['nb_departs_anticipes'] += 1
                         resume[pid]['total_min_anticipe'] += anticipe
 
+                for pid in resume:
+                    resume[pid]['total_retards'] = resume[pid]['total_min_retard'] + resume[pid]['total_min_anticipe']
                 resultats = list(resume.values())
-                resultats.sort(key=lambda x: x['total_min_retard'] + x['total_min_anticipe'], reverse=True)
+                resultats.sort(key=lambda x: x['total_retards'], reverse=True)
                 return resultats
 
-            else:  # type_rapport == 'detail'
+            else:  # detail
                 details = []
-            
-                # Entrées en retard
                 for row in rows_entrees:
                     if utiliser_globaux:
                         heure_theorique = heure_entree_globale
@@ -1986,29 +2587,26 @@ class Database:
                     else:
                         heure_theorique = row['heure_entree_theorique'] or '08:00:00'
                         tolerance = row['tolerance_entree'] or 0
-
                     minutes_pt = heure_en_minutes(row['heure_pointage'])
                     minutes_th = heure_en_minutes(heure_theorique)
-                    retard = minutes_pt - minutes_th - tolerance
-
-                    if retard > 0:
+                    retard = minutes_pt - minutes_th
+                    if retard > tolerance:
+                        if arrondir:
+                            retard = ((retard + 4) // 5) * 5
                         details.append({
                             'date': row['date_pointage'],
-                            'heure': row['heure_pointage'][:5] if row['heure_pointage'] else '',
+                            'heure': row['heure_pointage'][:5],
                             'type': 'Entrée en retard',
                             'matricule': row['matricule'],
                             'nom': row['nom'],
                             'prenom': row['prenom'],
                             'minutes': round(retard, 2),
                             'justifie': 'Non',
-                            'motif': '',
                             'direction': row['direction_nom'] or '',
                             'departement': row['departement_nom'] or '',
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or ''
                         })
-
-                # Sorties anticipées
                 for row in rows_sorties:
                     if utiliser_globaux:
                         heure_theorique = heure_sortie_globale
@@ -2016,31 +2614,29 @@ class Database:
                     else:
                         heure_theorique = row['heure_sortie_theorique'] or '17:00:00'
                         tolerance = row['tolerance_sortie'] or 0
-
                     minutes_pt = heure_en_minutes(row['heure_pointage'])
                     minutes_th = heure_en_minutes(heure_theorique)
-                    anticipe = minutes_th - minutes_pt - tolerance
-
-                    if anticipe > 0:
+                    anticipe = minutes_th - minutes_pt
+                    if anticipe > tolerance:
                         details.append({
                             'date': row['date_pointage'],
-                            'heure': row['heure_pointage'][:5] if row['heure_pointage'] else '',
+                            'heure': row['heure_pointage'][:5],
                             'type': 'Sortie anticipée',
                             'matricule': row['matricule'],
                             'nom': row['nom'],
                             'prenom': row['prenom'],
                             'minutes': round(anticipe, 2),
                             'justifie': 'Non',
-                            'motif': '',
                             'direction': row['direction_nom'] or '',
                             'departement': row['departement_nom'] or '',
                             'service': row['service_nom'] or '',
                             'equipe': row['equipe_nom'] or ''
                         })
-
                 details.sort(key=lambda x: x['date'], reverse=True)
                 return details
     #--------------------------------------------------------------------------------------
+    # 
+    #----------------------------------------------------------------------------------------
     def get_retards_avec_filtres(self, agent_id=None, direction=None, departement=None,
                                  service=None, equipe=None, date_debut=None, date_fin=None):
         with self.get_connection() as conn:
@@ -2085,92 +2681,6 @@ class Database:
             query += " GROUP BY r.personnel_id ORDER BY total_min DESC"
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
-
-    def get_absences_avec_filtres(self, agent=None, direction=None, departement=None,
-                                  service=None, equipe=None, date_debut=None, date_fin=None):
-        from datetime import datetime, timedelta
-        debut = datetime.strptime(date_debut, '%Y-%m-%d').date() if date_debut else None
-        fin = datetime.strptime(date_fin, '%Y-%m-%d').date() if date_fin else None
-        if not debut or not fin:
-            return []
-
-        query_agents = """
-            SELECT p.id, p.matricule, p.nom, p.prenom,
-                   dir.nom_direction as direction,
-                   dep.nom_departement as departement,
-                   s.nom_service as service,
-                   e.nom_equipe as equipe
-            FROM personnel p
-            LEFT JOIN directions dir ON p.direction_id = dir.id
-            LEFT JOIN departements dep ON p.departement_id = dep.id
-            LEFT JOIN services s ON p.service_id = s.id
-            LEFT JOIN equipes e ON p.equipe_id = e.id
-            WHERE p.statut = 'actif'
-        """
-        params_agents = []
-        if agent and agent != 'Tous':
-            query_agents += " AND (p.matricule LIKE ? OR p.nom LIKE ? OR p.prenom LIKE ?)"
-            params_agents.extend([f'%{agent}%', f'%{agent}%', f'%{agent}%'])
-        if direction and direction != 'Toutes':
-            query_agents += " AND dir.nom_direction = ?"
-            params_agents.append(direction)
-        if departement and departement != 'Tous':
-            query_agents += " AND dep.nom_departement = ?"
-            params_agents.append(departement)
-        if service and service != 'Tous':
-            query_agents += " AND s.nom_service = ?"
-            params_agents.append(service)
-        if equipe and equipe != 'Toutes':
-            query_agents += " AND e.nom_equipe = ?"
-            params_agents.append(equipe)
-
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute(query_agents, params_agents)
-            agents = c.fetchall()
-
-            resultats = []
-            for agent in agents:
-                jours_ouvres = self._calculer_jours_ouvres(debut, fin)
-                nb_jours_ouvres = len(jours_ouvres)
-
-                c.execute("""
-                    SELECT COUNT(DISTINCT date_pointage)
-                    FROM pointages
-                    WHERE personnel_id = ? AND date_pointage BETWEEN ? AND ?
-                """, (agent['id'], debut, fin))
-                nb_pointes = c.fetchone()[0] or 0
-
-                c.execute("""
-                    SELECT SUM(
-                        julianday(MIN(date_fin, ?)) - julianday(MAX(date_debut, ?)) + 1
-                    )
-                    FROM conges
-                    WHERE personnel_id = ? AND statut = 'approuve'
-                        AND date_debut <= ? AND date_fin >= ?
-                """, (fin, debut, agent['id'], fin, debut))
-                nb_conges = c.fetchone()[0] or 0
-                nb_conges = int(round(nb_conges))
-
-                absences = nb_jours_ouvres - nb_pointes - nb_conges
-                if absences < 0:
-                    absences = 0
-
-                resultats.append({
-                    'matricule': agent['matricule'],
-                    'nom': agent['nom'],
-                    'prenom': agent['prenom'],
-                    'direction': agent['direction'] or '',
-                    'departement': agent['departement'] or '',
-                    'service': agent['service'] or '',
-                    'equipe': agent['equipe'] or '',
-                    'jours_ouvres': nb_jours_ouvres,
-                    'pointes': nb_pointes,
-                    'conges': nb_conges,
-                    'absences': absences
-                })
-
-            return resultats
 
     # ------------------------------------------------------------
     # Utilitaires
